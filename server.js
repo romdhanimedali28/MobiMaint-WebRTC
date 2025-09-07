@@ -17,6 +17,7 @@ const io = new Server(server, {
 const users = [
   { username: 'user1', password: 'P', role: 'Technician' },
   { username: 'user2', password: 'P', role: 'Expert' },
+  { username: 'user4', password: 'P', role: 'Expert' },
   { username: 'user3', password: 'p3', role: 'Expert' },
 ];
 
