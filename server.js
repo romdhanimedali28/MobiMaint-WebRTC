@@ -18,6 +18,7 @@ const users = [
   { username: 'user1', password: 'P', role: 'Technician' },
   { username: 'user2', password: 'P', role: 'Expert' },
   { username: 'user4', password: 'P', role: 'Expert' },
+    { username: 'uuser7', password: 'P', role: 'Expert' },
     { username: 'user5', password: 'P', role: 'Expert' },
   { username: 'user3', password: 'p3', role: 'Expert' },
 ];
