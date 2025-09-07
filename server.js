@@ -1,3 +1,4 @@
+const { log } = require('console');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -23,6 +24,7 @@ app.use(express.json()); // Parse JSON request bodies
 
 // Login endpoint
 app.post('/login', (req, res) => {
+  log("herre login")
   const { username, password } = req.body;
   const user = users.find(
     (u) => u.username === username && u.password === password
@@ -55,12 +57,19 @@ app.get('/api/experts', (req, res) => {
 // Create call endpoint for Technicians
 app.post('/api/create-call', (req, res) => {
   const { userId } = req.body;
+  console.log("-----------------------")
+  console.log(userId)
   const user = users.find(u => u.username === userId && u.role === 'Technician');
+  console.log(user)
+
   if (!user) {
     return res.status(403).json({ message: 'Only Technicians can create calls' });
   }
   const callId = uuidv4();
+  console.log(callId)
   activeCalls.set(callId, { users: [userId], startTime: Date.now(), annotations: [], status: 'pending' });
+  console.log("-----------------------")
+
   res.json({ callId });
 });
 
@@ -74,11 +83,18 @@ function broadcastUserStatusChange(userId, status) {
 }
 
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
+  console.log('User connected:------->', socket.id);
 
   socket.on('register', (data) => {
     const { userId } = data;
+    console.log('register work',userId)
+
     if (userId) {
+      const oldSocketId = userSockets.get(userId);
+      if (oldSocketId && oldSocketId !== socket.id) {
+        console.log(`User ${userId} reconnecting with new socket ID: ${socket.id} (old: ${oldSocketId})`);
+      }
+      
       userSockets.set(userId, socket.id);
       socket.userId = userId;
       broadcastUserStatusChange(userId, 'online');
@@ -87,9 +103,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('call-request', (data) => {
-    console.log('call request:', data);
 
     const { callId, from, to } = data;
+    console.log('call request:', callId, from, to);
+
     if (!callId || !from || !to) {
       socket.emit('error', { message: 'Missing callId, from, or to' });
       return;
@@ -111,9 +128,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('call-response', (data) => {
-    console.log('call reponse:', data);
 
     const { callId, from, to, accepted } = data;
+    console.log('call response:', callId, from, to, accepted);
+
     if (!callId || !from || !to || accepted === undefined) {
       socket.emit('error', { message: 'Missing callId, from, to, or accepted' });
       return;
@@ -148,9 +166,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('join-call', (data) => {
-    console.log('call request:', data);
 
     const { callId, userId, role } = data;
+    console.log('join call:', callId, userId, role );
+
     if (!callId || !userId || !role) {
       socket.emit('error', { message: 'Missing callId, userId, or role' });
       return;
@@ -192,7 +211,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('offer', (data) => {
-    console.log('call offre:', data);
+    console.log('call offer:', data);
 
     const { callId, offer, to } = data;
     if (!callId || !offer || !to) {
@@ -276,11 +295,29 @@ io.on('connection', (socket) => {
 
     const { callId, to } = data;
     console.log(`User ${socket.userId} ending call ${callId}`);
-    const targetSocketId = userSockets.get(to);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit('call-ended', { from: socket.userId, callId });
+    
+    // Leave the call room
+    socket.leave(callId);
+    
+    // Notify other user that call ended
+    if (to) {
+      const targetSocketId = userSockets.get(to);
+      if (targetSocketId) {
+        io.to(targetSocketId).emit('call-ended', { from: socket.userId, callId });
+      }
     }
+    
+    // Cleanup user from call but maintain socket connection
     cleanupUserFromCall(socket.userId, callId);
+    
+    // Emit call-ended-successfully to confirm the user is still connected
+    socket.emit('call-ended-successfully', { 
+      userId: socket.userId, 
+      callId,
+      message: 'Call ended successfully, you remain connected' 
+    });
+    
+    console.log(`User ${socket.userId} ended call but remains connected`);
   });
 
   socket.on('logout', (data) => {
@@ -294,16 +331,36 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
-    // if (socket.userId) {
-    //   activeCalls.forEach((call, callId) => {
-    //     if (call.users.includes(socket.userId)) {
-    //       socket.to(callId).emit('user-left', { userId: socket.userId, callId });
-    //       cleanupUserFromCall(socket.userId, callId);
-    //     }
-    //   });
-    //   // Do not set user to offline automatically
-    //   // userSockets.delete(socket.userId); // Keep socket in userSockets to maintain online status
-    // }
+    
+    if (socket.userId) {
+      console.log(`User ${socket.userId} socket disconnected, checking for reconnection...`);
+      
+      // Give the user a chance to reconnect (delay before marking offline)
+      setTimeout(() => {
+        // Check if user has reconnected with a new socket
+        if (!userSockets.has(socket.userId) || userSockets.get(socket.userId) === socket.id) {
+          // User hasn't reconnected, mark as offline
+          console.log(`User ${socket.userId} didn't reconnect, marking as offline`);
+          
+          // Remove user from any active calls
+          activeCalls.forEach((call, callId) => {
+            if (call.users.includes(socket.userId)) {
+              socket.to(callId).emit('user-left', { userId: socket.userId, callId });
+              cleanupUserFromCall(socket.userId, callId);
+            }
+          });
+          
+          // Remove from userSockets and broadcast offline status
+          userSockets.delete(socket.userId);
+          broadcastUserStatusChange(socket.userId, 'offline');
+          console.log(`User ${socket.userId} disconnected - STATUS: OFFLINE`);
+        } else {
+          console.log(`User ${socket.userId} has reconnected with new socket`);
+        }
+      }, 2000);// 2 second delay to allow reconnection
+    
+    
+    }
   });
 
   function cleanupUserFromCall(userId, callId) {
@@ -319,8 +376,21 @@ io.on('connection', (socket) => {
     }
   }
 
+  // Heartbeat mechanism to keep connection alive
   socket.on('ping', () => {
     socket.emit('pong');
+  });
+
+  // Handle reconnection after call end
+  socket.on('reconnect-after-call', (data) => {
+    const { userId } = data;
+    if (userId) {
+      userSockets.set(userId, socket.id);
+      socket.userId = userId;
+      broadcastUserStatusChange(userId, 'online');
+      socket.emit('reconnect-success', { userId, message: 'Reconnected successfully' });
+      console.log(`User ${userId} reconnected after call with socket ID: ${socket.id}`);
+    }
   });
 });
 
@@ -373,6 +443,8 @@ server.listen(PORT, () => {
 
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
+    // process.exit(0);
+
   server.close(() => {
     console.log('Server closed');
     process.exit(0);
@@ -381,6 +453,8 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully');
+  // process.exit(0);
+
   server.close(() => {
     console.log('Server closed');
     process.exit(0);
