@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: webrtc-signaling-server
-        image: medaliromdhanidckr/webrtc-signaling-server:latest
+        image: medaliromdhani/webrtc-signaling-server:latest
         ports:
         - containerPort: 3000
           name: http
