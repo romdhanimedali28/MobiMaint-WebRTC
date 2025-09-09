@@ -114,7 +114,7 @@ pipeline {
             }
         }
 
-        stage('Deploy to Kubernetes with Ansible') {
+        stage('workspace debug') {
     steps {
         script {
             echo "Deploying to Kubernetes cluster using Ansible..."
@@ -244,6 +244,26 @@ stage('Deploy to Kubernetes with Ansible') {
                     docker rm -f test-container-${BUILD_NUMBER} || true
                     
                     # Clean up unused Docker resources
+                    docker system prune -f || true
+                    
+                    echo "✅ Cleanup completed"
+                """
+            }
+            cleanWs()
+        }
+    }
+}-f test-container-${BUILD_NUMBER} || true
+                    
+                    # Clean up unused Docker resources
+                    docker system prune -f || true
+                    
+                    echo "✅ Cleanup completed"
+                """
+            }
+            cleanWs()
+        }
+    }
+} # Clean up unused Docker resources
                     docker system prune -f || true
                     
                     echo "✅ Cleanup completed"
