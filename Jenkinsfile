@@ -31,22 +31,24 @@ pipeline {
             }
         }
         
-        stage('Build Docker Image') {
-            steps {
-                script {
-                    echo "Building Docker image: ${DOCKERHUB_REPO}:${BUILD_NUMBER}"
-                    
-                    // Build the Docker image
-                    def dockerImage = docker.build("${DOCKERHUB_REPO}:${BUILD_NUMBER}")
-                    
-                    // Tag with additional tags
-                    sh "docker tag ${DOCKERHUB_REPO}:${BUILD_NUMBER} ${DOCKERHUB_REPO}:latest"
-                    sh "docker tag ${DOCKERHUB_REPO}:${BUILD_NUMBER} ${DOCKERHUB_REPO}:${GIT_COMMIT_SHORT}"
-                    
-                    echo "✅ Docker image built successfully"
-                }
-            }
+     stage('Build Docker Image') {
+    steps {
+        script {
+            echo "Building Docker image: ${DOCKERHUB_REPO}:${BUILD_NUMBER}"
+            
+            // Build the Docker image with --network host
+            sh """
+                docker build --network host -t ${DOCKERHUB_REPO}:${BUILD_NUMBER} .
+            """
+            
+            // Tag with additional tags
+            sh "docker tag ${DOCKERHUB_REPO}:${BUILD_NUMBER} ${DOCKERHUB_REPO}:latest"
+            sh "docker tag ${DOCKERHUB_REPO}:${BUILD_NUMBER} ${DOCKERHUB_REPO}:${GIT_COMMIT_SHORT}"
+            
+            echo "✅ Docker image built successfully"
         }
+    }
+}
         
         stage('Test Docker Image') {
             steps {
