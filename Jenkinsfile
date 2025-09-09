@@ -113,7 +113,44 @@ pipeline {
         }
     }
 }
-        
+        stage('Debug Kubernetes Configuration') {
+    steps {
+        script {
+            echo "Debugging Kubernetes configuration file writing..."
+            withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
+                sh '''
+                    echo "=== Jenkins Credential File Information ==="
+                    echo "KUBECONFIG_FILE path: $KUBECONFIG_FILE"
+                    ls -la "$KUBECONFIG_FILE"
+                    
+                    echo ""
+                    echo "=== File Size and Permissions ==="
+                    stat "$KUBECONFIG_FILE"
+                    
+                    echo ""
+                    echo "=== File Content Check ==="
+                    echo "First 5 lines of the file:"
+                    head -5 "$KUBECONFIG_FILE"
+                    
+                    echo ""
+                    echo "=== Private Key Section ==="
+                    echo "Looking for client-key-data:"
+                    grep -A 2 -B 2 "client-key-data" "$KUBECONFIG_FILE" || echo "No client-key-data found"
+                    
+                    echo ""
+                    echo "=== Testing File Validity ==="
+                    export KUBECONFIG="$KUBECONFIG_FILE"
+                    kubectl config view --minify || echo "Failed to parse kubeconfig"
+                    
+                    echo ""
+                    echo "=== Copy to workspace for debugging ==="
+                    cp "$KUBECONFIG_FILE" ./debug-kubeconfig.yml
+                    echo "Copied kubeconfig to workspace as debug-kubeconfig.yml"
+                '''
+            }
+        }
+    }
+}
         stage('Deploy to Kubernetes with kubectl') {
             steps {
                 script {
