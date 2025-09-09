@@ -158,9 +158,9 @@ pipeline {
                     withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
                         sh '''
                             export KUBECONFIG=$KUBECONFIG_FILE
-                            kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/configmap.yaml
-                            kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/service.yaml
-                            kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/deployment.yaml
+                           sudo kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/configmap.yaml
+                           sudo kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/service.yaml
+                           sudo kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/deployment.yaml
                         '''
                     }
                     echo "✅ Deployment completed successfully!"
