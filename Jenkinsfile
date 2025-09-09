@@ -100,70 +100,89 @@ pipeline {
         }
         
         stage('Fetch K8s Manifests') {
-    steps {
-        script {
-            echo "Cloning external repo for Kubernetes manifests..."
-            withCredentials([sshUserPrivateKey(credentialsId: 'github-ssh-key', keyFileVariable: 'GIT_SSH_KEY')]) {
-                sh '''
-                    rm -rf external-k8s-manifests
-                    export GIT_SSH_COMMAND="ssh -i $GIT_SSH_KEY -o StrictHostKeyChecking=no"
-                    git clone git@github.com:romdhanimedali28/webrtc-k8s-devsecops.git external-k8s-manifests
-                '''
+            steps {
+                script {
+                    echo "Cloning external repo for Kubernetes manifests..."
+                    withCredentials([sshUserPrivateKey(credentialsId: 'github-ssh-key', keyFileVariable: 'GIT_SSH_KEY')]) {
+                        sh '''
+                            rm -rf external-k8s-manifests
+                            export GIT_SSH_COMMAND="ssh -i $GIT_SSH_KEY -o StrictHostKeyChecking=no"
+                            git clone git@github.com:romdhanimedali28/webrtc-k8s-devsecops.git external-k8s-manifests
+                        '''
+                    }
+                }
             }
         }
-    }
-}
-        stage('Debug Kubernetes Configuration') {
-    steps {
-        script {
-            echo "Debugging Kubernetes configuration file writing..."
-            withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
-                sh '''
-                    echo "=== Jenkins Credential File Information ==="
-                    echo "KUBECONFIG_FILE path: $KUBECONFIG_FILE"
-                    ls -la "$KUBECONFIG_FILE"
-                    
-                    echo ""
-                    echo "=== File Size and Permissions ==="
-                    stat "$KUBECONFIG_FILE"
-                    
-                    echo ""
-                    echo "=== File Content Check ==="
-                    echo "First 5 lines of the file:"
-                    head -5 "$KUBECONFIG_FILE"
-                    
-                    echo ""
-                    echo "=== Private Key Section ==="
-                    echo "Looking for client-key-data:"
-                    grep -A 2 -B 2 "client-key-data" "$KUBECONFIG_FILE" || echo "No client-key-data found"
-                    
-                    echo ""
-                    echo "=== Testing File Validity ==="
-                    export KUBECONFIG="$KUBECONFIG_FILE"
-                    kubectl config view --minify || echo "Failed to parse kubeconfig"
-                    
-                    echo ""
-                    echo "=== Copy to workspace for debugging ==="
-                    cp "$KUBECONFIG_FILE" ./debug-kubeconfig.yml
-                    echo "Copied kubeconfig to workspace as debug-kubeconfig.yml"
-                '''
+
+        stage('Setup SSH Tunnel to K8s Cluster') {
+            steps {
+                script {
+                    echo "Setting up SSH tunnel to Kubernetes cluster..."
+                    withCredentials([sshUserPrivateKey(credentialsId: 'azure-ssh-key', keyFileVariable: 'SSH_KEY')]) {
+                        sh '''
+                            # Kill any existing tunnel
+                            pkill -f "ssh.*6443:10.0.1.10:6443" || true
+                            
+                            # Start SSH tunnel in background
+                            ssh -i $SSH_KEY -f -N -L 6443:10.0.1.10:6443 \
+                                -o StrictHostKeyChecking=no \
+                                azureuser@172.192.57.220
+                            
+                            # Wait for tunnel to be established
+                            sleep 5
+                            
+                            # Verify tunnel is working
+                            netstat -tuln | grep 6443 || echo "Tunnel setup verification"
+                        '''
+                    }
+                }
             }
         }
-    }
-}
+        
+        stage('Prepare Kubeconfig for Local Access') {
+            steps {
+                script {
+                    echo "Preparing kubeconfig for local access through SSH tunnel..."
+                    withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
+                        sh '''
+                            # Create a modified kubeconfig that uses localhost
+                            cp "$KUBECONFIG_FILE" ./kubeconfig-local.yml
+                            
+                            # Replace the server URL to use localhost (SSH tunnel)
+                            sed -i 's|https://10.0.1.10:6443|https://localhost:6443|g' ./kubeconfig-local.yml
+                            
+                            # Verify the modification
+                            grep "server:" ./kubeconfig-local.yml
+                            
+                            # Set the kubeconfig environment variable
+                            export KUBECONFIG="$(pwd)/kubeconfig-local.yml"
+                            
+                            # Test connection
+                            kubectl version --client
+                        '''
+                    }
+                }
+            }
+        }
+        
         stage('Deploy to Kubernetes') {
             steps {
                 script {
                     echo "Deploying to Kubernetes cluster..."
-                    withKubeConfig([credentialsId: 'k8s_config']) {
-                        sh """
-                            # Apply Kubernetes manifests
-                            kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/
-                            # Wait for deployment to complete
-                            kubectl rollout status deployment/webrtc-signaling-server -n default --timeout=300s
-                            echo "✅ Deployment completed successfully!"
-                        """
-                    }
+                    sh """
+                        export KUBECONFIG="\$(pwd)/kubeconfig-local.yml"
+                        
+                        echo "Testing connection to cluster..."
+                        kubectl get nodes
+                        
+                        echo "Applying Kubernetes manifests..."
+                        kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/
+                        
+                        echo "Waiting for deployment to complete..."
+                        kubectl rollout status deployment/webrtc-signaling-server -n default --timeout=300s
+                        
+                        echo "✅ Deployment completed successfully!"
+                    """
                 }
             }
         }
@@ -171,20 +190,22 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 script {
-                    echo "Verifying deployment with kubectl..."
-                    withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
-                        sh '''
-                            export KUBECONFIG=$KUBECONFIG_FILE
-                            echo "=== Deployment Status ==="
-                            kubectl get deployment webrtc-signaling-server -o wide
-                            echo "=== Pod Status ==="
-                            kubectl get pods -l app=webrtc-signaling-server -o wide
-                            echo "=== Service Status ==="
-                            kubectl get service webrtc-signaling-service -o wide
-                            echo "=== Recent Pod Logs ==="
-                            kubectl logs -l app=webrtc-signaling-server --tail=10
-                        '''
-                    }
+                    echo "Verifying deployment..."
+                    sh '''
+                        export KUBECONFIG="$(pwd)/kubeconfig-local.yml"
+                        
+                        echo "=== Deployment Status ==="
+                        kubectl get deployment webrtc-signaling-server -o wide
+                        
+                        echo "=== Pod Status ==="
+                        kubectl get pods -l app=webrtc-signaling-server -o wide
+                        
+                        echo "=== Service Status ==="
+                        kubectl get service webrtc-signaling-service -o wide
+                        
+                        echo "=== Recent Pod Logs ==="
+                        kubectl logs -l app=webrtc-signaling-server --tail=10
+                    '''
                 }
             }
         }
@@ -205,6 +226,12 @@ pipeline {
         
         always {
             script {
+                // Clean up SSH tunnel
+                sh '''
+                    echo "Cleaning up SSH tunnel..."
+                    pkill -f "ssh.*6443:10.0.1.10:6443" || true
+                '''
+                
                 // Clean up Docker images to save space on Jenkins server
                 sh """
                     echo "Cleaning up Docker images..."
