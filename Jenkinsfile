@@ -4,7 +4,6 @@ pipeline {
     environment {
         DOCKERHUB_REPO = 'medaliromdhani/webrtc-signaling-server'
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-        KUBECONFIG_CREDENTIAL = 'k8s-config'
         BUILD_NUMBER = "${env.BUILD_NUMBER}"
         GIT_COMMIT_SHORT = sh(
             script: "git rev-parse --short HEAD",
@@ -104,16 +103,10 @@ pipeline {
             steps {
                 script {
                     echo "Running Ansible last_update.yaml..."
-                    withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
-                        sh """
-                            cp $KUBECONFIG_FILE kubeconfig
-                            chmod 600 kubeconfig
-                            ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
-                                ~/webrtc-k8s-devsecops/ansible/playbooks/last_update.yaml \
-                                -e "KUBECONFIG_CONTENT=\$(cat kubeconfig)"
-                            rm kubeconfig
-                        """
-                    }
+                    sh """
+                        ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
+                            ~/webrtc-k8s-devsecops/ansible/playbooks/last_update.yaml
+                    """
                 }
             }
         }
@@ -122,17 +115,11 @@ pipeline {
             steps {
                 script {
                     echo "Deploying to Kubernetes cluster using Ansible..."
-                    withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
-                        sh """
-                            cp $KUBECONFIG_FILE kubeconfig
-                            chmod 600 kubeconfig
-                            ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
-                                ~/webrtc-k8s-devsecops/kubernetes/manifests/webrtc-signaling/k8s-deploy.yml \
-                                -e "dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}" \
-                                -e "KUBECONFIG_CONTENT=\$(cat kubeconfig)"
-                            rm kubeconfig
-                        """
-                    }
+                    sh """
+                        ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
+                            ~/webrtc-k8s-devsecops/kubernetes/manifests/webrtc-signaling/k8s-deploy.yml \
+                            -e \"dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}\"
+                    """
                     echo "✅ Deployment completed successfully!"
                 }
             }
@@ -142,17 +129,11 @@ pipeline {
             steps {
                 script {
                     echo "Verifying deployment using Ansible..."
-                    withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
-                        sh """
-                            cp $KUBECONFIG_FILE kubeconfig
-                            chmod 600 kubeconfig
-                            ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
-                                ~/webrtc-k8s-devsecops/kubernetes/manifests/webrtc-signaling/k8s-verify.yml \
-                                -e "dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}" \
-                                -e "KUBECONFIG_CONTENT=\$(cat kubeconfig)"
-                            rm kubeconfig
-                        """
-                    }
+                    sh """
+                        ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
+                            ~/webrtc-k8s-devsecops/kubernetes/manifests/webrtc-signaling/k8s-verify.yml \
+                            -e \"dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}\"
+                    """
                 }
             }
         }
