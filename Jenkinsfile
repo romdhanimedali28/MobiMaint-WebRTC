@@ -114,12 +114,76 @@ pipeline {
             }
         }
 
-        
-     
-        
         stage('Deploy to Kubernetes with Ansible') {
-            steps {
-                script {
+    steps {
+        script {
+            echo "Deploying to Kubernetes cluster using Ansible..."
+            
+            // Debug: Show current workspace
+            sh '''
+                echo "=== WORKSPACE DEBUG ==="
+                echo "Current working directory: $(pwd)"
+                echo "Workspace contents:"
+                ls -la
+                echo ""
+                
+                echo "=== EXTERNAL-K8S-MANIFESTS DEBUG ==="
+                if [ -d "external-k8s-manifests" ]; then
+                    echo "external-k8s-manifests directory exists"
+                    echo "Contents of external-k8s-manifests:"
+                    ls -la external-k8s-manifests/
+                    echo ""
+                    
+                    echo "Contents of external-k8s-manifests/kubernetes/:"
+                    ls -la external-k8s-manifests/kubernetes/ || echo "kubernetes directory not found"
+                    echo ""
+                    
+                    echo "Contents of external-k8s-manifests/kubernetes/manifests/:"
+                    ls -la external-k8s-manifests/kubernetes/manifests/ || echo "manifests directory not found"
+                    echo ""
+                    
+                    echo "Contents of external-k8s-manifests/kubernetes/manifests/webrtc-signaling/:"
+                    ls -la external-k8s-manifests/kubernetes/manifests/webrtc-signaling/ || echo "webrtc-signaling directory not found"
+                    echo ""
+                    
+                    echo "Checking for playbook files:"
+                    find external-k8s-manifests/ -name "k8s-deploy.yml" -type f || echo "k8s-deploy.yml not found"
+                    echo ""
+                else
+                    echo "ERROR: external-k8s-manifests directory does not exist!"
+                    echo "Available directories:"
+                    ls -la
+                fi
+                echo "========================"
+            '''
+            
+            withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
+                sh '''
+                    # Try both possible locations for the playbook
+                    if [ -f "external-k8s-manifests/kubernetes/manifests/webrtc-signaling/k8s-deploy.yml" ]; then
+                        echo "Using playbook from webrtc-signaling directory"
+                        PLAYBOOK_PATH="external-k8s-manifests/kubernetes/manifests/webrtc-signaling/k8s-deploy.yml"
+                    elif [ -f "external-k8s-manifests/kubernetes/manifests/k8s-deploy.yml" ]; then
+                        echo "Using playbook from manifests directory"
+                        PLAYBOOK_PATH="external-k8s-manifests/kubernetes/manifests/k8s-deploy.yml"
+                    else
+                        echo "ERROR: k8s-deploy.yml not found in either location!"
+                        exit 1
+                    fi
+                    
+                    echo "Running ansible-playbook with: $PLAYBOOK_PATH"
+                    ansible-playbook -i external-k8s-manifests/ansible/inventory.ini \
+                        "$PLAYBOOK_PATH" \
+                        -e "KUBECONFIG_CONTENT=$(cat $KUBECONFIG_FILE | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
+                '''
+            }
+        }
+    }
+}
+
+stage('Deploy to Kubernetes with Ansible') {
+    steps {
+        script {
                     echo "Deploying to Kubernetes cluster using Ansible..."
                     withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
                         sh '''
