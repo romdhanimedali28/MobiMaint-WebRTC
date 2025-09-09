@@ -100,16 +100,19 @@ pipeline {
         }
         
         stage('Fetch K8s Manifests') {
-            steps {
-                script {
-                    echo "Cloning external repo for Kubernetes manifests..."
-                    sh '''
-                        rm -rf external-k8s-manifests
-                        git clone git@github.com:romdhanimedali28/webrtc-k8s-devsecops.git external-k8s-manifests
-                    '''
-                }
+    steps {
+        script {
+            echo "Cloning external repo for Kubernetes manifests..."
+            withCredentials([sshUserPrivateKey(credentialsId: 'github-ssh-key', keyFileVariable: 'GIT_SSH_KEY')]) {
+                sh '''
+                    rm -rf external-k8s-manifests
+                    export GIT_SSH_COMMAND="ssh -i $GIT_SSH_KEY -o StrictHostKeyChecking=no"
+                    git clone git@github.com:romdhanimedali28/webrtc-k8s-devsecops.git external-k8s-manifests
+                '''
             }
         }
+    }
+}
         
         stage('Deploy to Kubernetes with kubectl') {
             steps {
