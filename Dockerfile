@@ -4,9 +4,6 @@ FROM node:18-alpine
 # Set working directory
 WORKDIR /app
 
-# Install tini for proper signal handling
-RUN apk add --no-cache tini
-
 # Copy package files first for better layer caching
 COPY package*.json ./
 
@@ -36,8 +33,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
 
-# Use tini to handle signals properly
-ENTRYPOINT ["tini", "--"]
-
-# Start the application
-CMD ["node", "server.js"]
+# Start the application with Node.js built-in init process
+CMD ["node", "--init", "server.js"]
