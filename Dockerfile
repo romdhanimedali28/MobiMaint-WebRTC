@@ -4,8 +4,8 @@ FROM node:18-alpine
 # Set working directory
 WORKDIR /app
 
-# Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
+# Install tini for proper signal handling
+RUN apk add --no-cache tini
 
 # Copy package files first for better layer caching
 COPY package*.json ./
@@ -36,8 +36,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
 
-# Use dumb-init to handle signals properly
-ENTRYPOINT ["dumb-init", "--"]
+# Use tini to handle signals properly
+ENTRYPOINT ["tini", "--"]
 
 # Start the application
 CMD ["node", "server.js"]
