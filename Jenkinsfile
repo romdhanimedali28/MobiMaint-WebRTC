@@ -99,27 +99,30 @@ pipeline {
             }
         }
         
-        stage('Ansible Last Update') {
+        stage('Fetch K8s Manifests') {
             steps {
                 script {
-                    echo "Running Ansible last_update.yaml..."
-                    sh """
-                        ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
-                            ~/webrtc-k8s-devsecops/ansible/playbooks/last_update.yaml
-                    """
+                    echo "Cloning external repo for Kubernetes manifests..."
+                    sh '''
+                        rm -rf external-k8s-manifests
+                        git clone https://github.com/romdhanimedali28/webrtc-k8s-devsecops.git external-k8s-manifests
+                    '''
                 }
             }
         }
         
-        stage('Deploy to Kubernetes with Ansible') {
+        stage('Deploy to Kubernetes with kubectl') {
             steps {
                 script {
-                    echo "Deploying to Kubernetes cluster using Ansible..."
-                    sh """
-                        ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
-                            ~/webrtc-k8s-devsecops/kubernetes/manifests/webrtc-signaling/k8s-deploy.yml \
-                            -e \"dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}\"
-                    """
+                    echo "Deploying to Kubernetes cluster using kubectl..."
+                    withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
+                        sh '''
+                            export KUBECONFIG=$KUBECONFIG_FILE
+                            kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/configmap.yaml
+                            kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/service.yaml
+                            kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/deployment.yaml
+                        '''
+                    }
                     echo "✅ Deployment completed successfully!"
                 }
             }
@@ -128,12 +131,20 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 script {
-                    echo "Verifying deployment using Ansible..."
-                    sh """
-                        ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
-                            ~/webrtc-k8s-devsecops/kubernetes/manifests/webrtc-signaling/k8s-verify.yml \
-                            -e \"dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}\"
-                    """
+                    echo "Verifying deployment with kubectl..."
+                    withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
+                        sh '''
+                            export KUBECONFIG=$KUBECONFIG_FILE
+                            echo "=== Deployment Status ==="
+                            kubectl get deployment webrtc-signaling-server -o wide
+                            echo "=== Pod Status ==="
+                            kubectl get pods -l app=webrtc-signaling-server -o wide
+                            echo "=== Service Status ==="
+                            kubectl get service webrtc-signaling-service -o wide
+                            echo "=== Recent Pod Logs ==="
+                            kubectl logs -l app=webrtc-signaling-server --tail=10
+                        '''
+                    }
                 }
             }
         }
