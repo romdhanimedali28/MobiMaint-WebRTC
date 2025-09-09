@@ -51,7 +51,7 @@ pipeline {
         stage('Test Docker Image') {
             steps {
                 script {
-                    echo "Testing Docker image..."
+                    echo "Testing Docker image... "
                     
                     // Test that the container starts and health check passes
                     sh """
