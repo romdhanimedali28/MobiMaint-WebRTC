@@ -100,26 +100,29 @@ pipeline {
             }
         }
         
-        stage('Deploy to Kubernetes') {
+        stage('Deploy to Kubernetes with Ansible') {
             steps {
                 script {
-                    echo "Deploying to Kubernetes cluster..."
+                    echo "Deploying to Kubernetes cluster using Ansible..."
                     
-                    withKubeConfig([credentialsId: 'k8s-config']) {
-                        // Replace image tag in deployment file
+                    withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
                         sh """
-                            # Update deployment with new image tag
-                            sed -i 's|medaliromdhani/webrtc-signaling-server:.*|medaliromdhani/webrtc-signaling-server:${BUILD_NUMBER}|g' k8s/deployment.yaml
+                            # Copy kubeconfig to workspace
+                            cp $KUBECONFIG_FILE kubeconfig
+                            chmod 600 kubeconfig
                             
-                            # Apply Kubernetes manifests
-                            kubectl apply -f k8s/
+                            # Run Ansible playbook
+                            ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
+                                ~/webrtc-k8s-devsecops/ansible/playbooks/k8s-deploy.yml \
+                                -e "dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}" \
+                                -e "KUBECONFIG_CONTENT=$(cat kubeconfig)"
                             
-                            # Wait for deployment to complete
-                            kubectl rollout status deployment/webrtc-signaling-server -n default --timeout=300s
-                            
-                            echo "✅ Deployment completed successfully!"
+                            # Clean up kubeconfig
+                            rm kubeconfig
                         """
                     }
+                    
+                    echo "✅ Deployment completed successfully!"
                 }
             }
         }
@@ -127,40 +130,20 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 script {
-                    echo "Verifying deployment..."
-                    
-                    withKubeConfig([credentialsId: 'k8s-config']) {
+                    echo "Verifying deployment using Ansible..."
+                    withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
                         sh """
-                            echo "=== Deployment Status ==="
-                            kubectl get deployment webrtc-signaling-server -o wide
-                            
-                            echo "=== Pod Status ==="
-                            kubectl get pods -l app=webrtc-signaling-server -o wide
-                            
-                            echo "=== Service Status ==="
-                            kubectl get service webrtc-signaling-service -o wide
-                            
-                            echo "=== Recent Pod Logs ==="
-                            kubectl logs -l app=webrtc-signaling-server --tail=10
+                            # Copy kubeconfig to workspace
+                            cp $KUBECONFIG_FILE kubeconfig
+                            chmod 600 kubeconfig
+                            # Run Ansible playbook for verification
+                            ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
+                                ~/webrtc-k8s-devsecops/ansible/playbooks/k8s-verify.yml \
+                                -e \"dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}\" \
+                                -e \"KUBECONFIG_CONTENT=$(cat kubeconfig)\"
+                            # Clean up kubeconfig
+                            rm kubeconfig
                         """
-                        
-                        // Get external IP if available
-                        script {
-                            try {
-                                def serviceIP = sh(
-                                    script: "kubectl get service webrtc-signaling-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}'",
-                                    returnStdout: true
-                                ).trim()
-                                
-                                if (serviceIP && serviceIP != "") {
-                                    echo "🌐 Application available at: http://${serviceIP}:80"
-                                } else {
-                                    echo "📋 Service is running but external IP not yet assigned"
-                                }
-                            } catch (Exception e) {
-                                echo "📋 External IP check skipped"
-                            }
-                        }
                     }
                 }
             }
