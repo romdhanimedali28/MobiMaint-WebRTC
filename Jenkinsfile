@@ -117,7 +117,7 @@ pipeline {
     steps {
         script {
             echo "Debugging Kubernetes configuration file writing..."
-            withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
+            withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
                 sh '''
                     echo "=== Jenkins Credential File Information ==="
                     echo "KUBECONFIG_FILE path: $KUBECONFIG_FILE"
@@ -151,19 +151,21 @@ pipeline {
         }
     }
 }
-        stage('Deploy to Kubernetes with kubectl') {
+        stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    echo "Deploying to Kubernetes cluster using kubectl..."
-                    withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
-                        sh '''
-                            export KUBECONFIG=$KUBECONFIG_FILE
-                           sudo kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/configmap.yaml
-                           sudo kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/service.yaml
-                           sudo kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/deployment.yaml
-                        '''
+                    echo "Deploying to Kubernetes cluster..."
+                    withKubeConfig([credentialsId: 'k8s-config']) {
+                        sh """
+                            # Update deployment with new image tag
+                            sed -i 's|medaliromdhani/webrtc-signaling-server:.*|medaliromdhani/webrtc-signaling-server:${BUILD_NUMBER}|g' k8s/deployment.yaml
+                            # Apply Kubernetes manifests
+                            kubectl apply -f k8s/
+                            # Wait for deployment to complete
+                            kubectl rollout status deployment/webrtc-signaling-server -n default --timeout=300s
+                            echo "✅ Deployment completed successfully!"
+                        """
                     }
-                    echo "✅ Deployment completed successfully!"
                 }
             }
         }
@@ -172,7 +174,7 @@ pipeline {
             steps {
                 script {
                     echo "Verifying deployment with kubectl..."
-                    withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
+                    withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
                         sh '''
                             export KUBECONFIG=$KUBECONFIG_FILE
                             echo "=== Deployment Status ==="
