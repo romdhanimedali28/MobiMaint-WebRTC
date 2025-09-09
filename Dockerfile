@@ -4,11 +4,14 @@ FROM node:18-alpine
 # Set working directory
 WORKDIR /app
 
+# Install wget for health checks (needed for Alpine)
+RUN apk add --no-cache wget
+
 # Copy package files first for better layer caching
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+# Install dependencies (use --omit=dev instead of --only=production)
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Copy server code
 COPY server.js ./

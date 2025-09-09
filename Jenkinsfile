@@ -48,33 +48,67 @@ pipeline {
             }
         }
         
-        stage('Test Docker Image') {
-            steps {
-                script {
-                    echo "Testing Docker image... "
-                    
-                    // Test that the container starts and health check passes
-                    sh """
-                        echo "Starting container for testing..."
-                        docker run -d --name test-container-${BUILD_NUMBER} \
-                            -p 3001:3000 \
-                            ${DOCKERHUB_REPO}:${BUILD_NUMBER}
-                        
-                        echo "Waiting for container to be ready..."
-                        sleep 10
-                        
-                        echo "Testing health endpoint..."
-                        docker exec test-container-${BUILD_NUMBER} wget --spider -q http://localhost:3000/health
-                        
+       stage('Test Docker Image') {
+    steps {
+        script {
+            echo "Testing Docker image..."
+            
+            // Test that the container starts and health check passes
+            sh """
+                set -e
+                echo "Starting container for testing..."
+                
+                # Start container with better error handling
+                CONTAINER_ID=\$(docker run -d --name test-container-${BUILD_NUMBER} \
+                    -p 3001:3000 \
+                    ${DOCKERHUB_REPO}:${BUILD_NUMBER})
+                
+                echo "Container ID: \$CONTAINER_ID"
+                echo "Waiting for container to be ready..."
+                sleep 15
+                
+                # Check if container is still running
+                if ! docker ps --format "table {{.Names}}" | grep -q "test-container-${BUILD_NUMBER}"; then
+                    echo "❌ Container stopped unexpectedly. Checking logs..."
+                    docker logs test-container-${BUILD_NUMBER} || true
+                    docker rm test-container-${BUILD_NUMBER} || true
+                    exit 1
+                fi
+                
+                echo "Container is running. Testing health endpoint..."
+                
+                # Test health endpoint with retry
+                for i in {1..5}; do
+                    echo "Health check attempt \$i..."
+                    if docker exec test-container-${BUILD_NUMBER} wget --spider -q http://localhost:3000/health; then
                         echo "✅ Health check passed!"
-                        
-                        echo "Cleaning up test container..."
-                        docker stop test-container-${BUILD_NUMBER}
-                        docker rm test-container-${BUILD_NUMBER}
-                    """
-                }
+                        break
+                    else
+                        if [ \$i -eq 5 ]; then
+                            echo "❌ Health check failed after 5 attempts"
+                            docker logs test-container-${BUILD_NUMBER}
+                            exit 1
+                        fi
+                        echo "Health check failed, retrying in 5 seconds..."
+                        sleep 5
+                    fi
+                done
+            """
+        }
+    }
+    post {
+        always {
+            script {
+                // Clean up test container regardless of success/failure
+                sh """
+                    echo "Cleaning up test container..."
+                    docker stop test-container-${BUILD_NUMBER} || true
+                    docker rm test-container-${BUILD_NUMBER} || true
+                """
             }
         }
+    }
+}
         
         stage('Push to DockerHub') {
             steps {
