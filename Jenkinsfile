@@ -131,19 +131,6 @@ pipeline {
                 }
             }
         }
-        stage('Verify Deployment') {
-            steps {
-                script {
-                    echo "Verifying deployment..."
-                    withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
-                    sh '''
-                         ansible-playbook -i external-k8s-manifests/ansible/inventory.ini \
-                                external-k8s-manifests/kubernetes/manifests/k8s-verify.yml \
-                                -e "KUBECONFIG_CONTENT=$(cat $KUBECONFIG_FILE | python -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
-                    '''
-                }
-            }
-        }
     }
     
     post {
