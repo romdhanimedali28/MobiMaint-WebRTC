@@ -232,40 +232,16 @@ stage('Deploy to Kubernetes with Ansible') {
                     echo "Cleaning up SSH tunnel..."
                     pkill -f "ssh.*6443:10.0.1.10:6443" || true
                 '''
-                
                 // Clean up Docker images to save space on Jenkins server
                 sh """
                     echo "Cleaning up Docker images..."
                     docker rmi ${DOCKERHUB_REPO}:${BUILD_NUMBER} || true
                     docker rmi ${DOCKERHUB_REPO}:latest || true
                     docker rmi ${DOCKERHUB_REPO}:${GIT_COMMIT_SHORT} || true
-                    
                     # Clean up any test containers
                     docker rm -f test-container-${BUILD_NUMBER} || true
-                    
                     # Clean up unused Docker resources
                     docker system prune -f || true
-                    
-                    echo "✅ Cleanup completed"
-                """
-            }
-            cleanWs()
-        }
-    }
-}-f test-container-${BUILD_NUMBER} || true
-                    
-                    # Clean up unused Docker resources
-                    docker system prune -f || true
-                    
-                    echo "✅ Cleanup completed"
-                """
-            }
-            cleanWs()
-        }
-    }
-} # Clean up unused Docker resources
-                    docker system prune -f || true
-                    
                     echo "✅ Cleanup completed"
                 """
             }
