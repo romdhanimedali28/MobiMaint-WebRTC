@@ -155,7 +155,7 @@ pipeline {
             steps {
                 script {
                     echo "Deploying to Kubernetes cluster..."
-                    withKubeConfig([credentialsId: 'k8s-config']) {
+                    withKubeConfig([credentialsId: 'k8s_config']) {
                         sh """
                             # Update deployment with new image tag
                             sed -i 's|medaliromdhani/webrtc-signaling-server:.*|medaliromdhani/webrtc-signaling-server:${BUILD_NUMBER}|g' k8s/deployment.yaml
