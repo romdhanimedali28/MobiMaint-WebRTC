@@ -131,7 +131,7 @@ pipeline {
                             # Wait for tunnel to be established
                             sleep 5
                             
-                            # Verify tunnel is working
+                            # Verify tunnel is working good
                             netstat -tuln | grep 6443 || echo "Tunnel setup verification"
                         '''
                     }
