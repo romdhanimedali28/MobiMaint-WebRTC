@@ -105,7 +105,7 @@ pipeline {
                     echo "Cloning external repo for Kubernetes manifests..."
                     sh '''
                         rm -rf external-k8s-manifests
-                        git clone https://github.com/romdhanimedali28/webrtc-k8s-devsecops.git external-k8s-manifests
+                        git clone git@github.com:romdhanimedali28/webrtc-k8s-devsecops.git external-k8s-manifests
                     '''
                 }
             }
