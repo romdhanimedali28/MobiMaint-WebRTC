@@ -121,7 +121,7 @@ pipeline {
             steps {
                 script {
                     echo "Deploying to Kubernetes cluster using Ansible..."
-                    withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
+                    withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
                         sh '''
                             ansible-playbook -i external-k8s-manifests/ansible/inventory.ini \
                                 external-k8s-manifests/kubernetes/manifests/k8s-deploy.yml \
@@ -135,20 +135,11 @@ pipeline {
             steps {
                 script {
                     echo "Verifying deployment..."
+                    withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
                     sh '''
-                        export KUBECONFIG="$(pwd)/kubeconfig-local.yml"
-                        
-                        echo "=== Deployment Status ==="
-                        kubectl get deployment webrtc-signaling-server -o wide
-                        
-                        echo "=== Pod Status ==="
-                        kubectl get pods -l app=webrtc-signaling-server -o wide
-                        
-                        echo "=== Service Status ==="
-                        kubectl get service webrtc-signaling-service -o wide
-                        
-                        echo "=== Recent Pod Logs ==="
-                        kubectl logs -l app=webrtc-signaling-server --tail=10
+                         ansible-playbook -i external-k8s-manifests/ansible/inventory.ini \
+                                external-k8s-manifests/kubernetes/manifests/k8s-verify.yml \
+                                -e "KUBECONFIG_CONTENT=$(cat $KUBECONFIG_FILE | python -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
                     '''
                 }
             }
