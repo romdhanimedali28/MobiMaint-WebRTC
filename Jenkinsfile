@@ -110,7 +110,7 @@ pipeline {
                             chmod 600 kubeconfig
                             ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
                                 ~/webrtc-k8s-devsecops/ansible/playbooks/last_update.yaml \
-                                -e \"KUBECONFIG_CONTENT=$(cat kubeconfig)\"
+                                -e "KUBECONFIG_CONTENT=\$(cat kubeconfig)"
                             rm kubeconfig
                         """
                     }
@@ -128,8 +128,8 @@ pipeline {
                             chmod 600 kubeconfig
                             ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
                                 ~/webrtc-k8s-devsecops/kubernetes/manifests/webrtc-signaling/k8s-deploy.yml \
-                                -e \"dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}\" \
-                                -e \"KUBECONFIG_CONTENT=$(cat kubeconfig)\"
+                                -e "dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}" \
+                                -e "KUBECONFIG_CONTENT=\$(cat kubeconfig)"
                             rm kubeconfig
                         """
                     }
@@ -148,8 +148,8 @@ pipeline {
                             chmod 600 kubeconfig
                             ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
                                 ~/webrtc-k8s-devsecops/kubernetes/manifests/webrtc-signaling/k8s-verify.yml \
-                                -e \"dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}\" \
-                                -e \"KUBECONFIG_CONTENT=$(cat kubeconfig)\"
+                                -e "dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}" \
+                                -e "KUBECONFIG_CONTENT=\$(cat kubeconfig)"
                             rm kubeconfig
                         """
                     }
