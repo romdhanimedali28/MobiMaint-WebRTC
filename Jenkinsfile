@@ -139,7 +139,7 @@ stage('Deploy to Kubernetes with Ansible') {
                         sh '''
                             ansible-playbook -i external-k8s-manifests/ansible/inventory.ini \
                                 external-k8s-manifests/kubernetes/manifests/k8s-verify.yml \
-                                -e "KUBECONFIG_CONTENT=$(cat $KUBECONFIG_FILE | python -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
+                                -e "KUBECONFIG_CONTENT=$(cat $KUBECONFIG_FILE | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
                         '''
                     }
                 }
