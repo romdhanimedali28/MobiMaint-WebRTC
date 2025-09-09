@@ -114,79 +114,20 @@ pipeline {
             }
         }
 
-        stage('Setup SSH Tunnel to K8s Cluster') {
+        
+     
+        
+        stage('Deploy to Kubernetes with Ansible') {
             steps {
                 script {
-                    echo "Setting up SSH tunnel to Kubernetes cluster..."
-                    withCredentials([sshUserPrivateKey(credentialsId: 'azure-ssh-key', keyFileVariable: 'SSH_KEY')]) {
-                        sh '''
-                            # Kill any existing tunnel
-                            pkill -f "ssh.*6443:10.0.1.10:6443" || true
-                            
-                            # Start SSH tunnel in background
-                            ssh -i $SSH_KEY -f -N -L 6443:10.0.1.10:6443 \
-                                -o StrictHostKeyChecking=no \
-                                azureuser@172.192.57.220
-                            
-                            # Wait for tunnel to be established
-                            sleep 5
-                            
-                            # Verify tunnel is working good
-                            netstat -tuln | grep 6443 || echo "Tunnel setup verification"
-                        '''
-                    }
+                    echo "Deploying to Kubernetes cluster using Ansible..."
+                    sh '''
+                        ansible-playbook -i external-k8s-manifests/ansible/inventory.ini \
+                            external-k8s-manifests/kubernetes/manifests/k8s-deploy.yml
+                    '''
                 }
             }
         }
-        
-        stage('Prepare Kubeconfig for Local Access') {
-            steps {
-                script {
-                    echo "Preparing kubeconfig for local access through SSH tunnel..."
-                    withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
-                        sh '''
-                            # Create a modified kubeconfig that uses localhost
-                            cp "$KUBECONFIG_FILE" ./kubeconfig-local.yml
-                            
-                            # Replace the server URL to use localhost (SSH tunnel)
-                            sed -i 's|https://10.0.1.10:6443|https://localhost:6443|g' ./kubeconfig-local.yml
-                            
-                            # Verify the modification
-                            grep "server:" ./kubeconfig-local.yml
-                            
-                            # Set the kubeconfig environment variable
-                            export KUBECONFIG="$(pwd)/kubeconfig-local.yml"
-                            
-                            # Test connection
-                            kubectl version --client
-                        '''
-                    }
-                }
-            }
-        }
-        
-        stage('Deploy to Kubernetes') {
-            steps {
-                script {
-                    echo "Deploying to Kubernetes cluster..."
-                    sh """
-                        export KUBECONFIG="\$(pwd)/kubeconfig-local.yml"
-                        
-                        echo "Testing connection to cluster..."
-                        kubectl get nodes
-                        
-                        echo "Applying Kubernetes manifests..."
-                        kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/
-                        
-                        echo "Waiting for deployment to complete..."
-                        kubectl rollout status deployment/webrtc-signaling-server -n default --timeout=300s
-                        
-                        echo "✅ Deployment completed successfully!"
-                    """
-                }
-            }
-        }
-        
         stage('Verify Deployment') {
             steps {
                 script {
