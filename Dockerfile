@@ -4,14 +4,15 @@ FROM node:18-alpine
 # Set working directory
 WORKDIR /app
 
-# Install wget for health checks (needed for Alpine)
-RUN apk add --no-cache wget
+# Install dumb-init for proper signal handling
+ADD https://github.com/Yelp/dumb-init/releases/download/v1.2.5/dumb-init_1.2.5_amd64 /usr/local/bin/dumb-init
+RUN chmod +x /usr/local/bin/dumb-init
 
 # Copy package files first for better layer caching
 COPY package*.json ./
 
-# Install dependencies (use --omit=dev instead of --only=production)
-RUN npm ci --omit=dev && npm cache clean --force
+# Install dependencies
+RUN npm ci --only=production && npm cache clean --force
 
 # Copy server code
 COPY server.js ./
@@ -36,5 +37,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
 
-# Start the application with Node.js built-in init process
-CMD ["node", "--init", "server.js"]
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["dumb-init", "--"]
+
+# Start the application
+CMD ["node", "server.js"]
