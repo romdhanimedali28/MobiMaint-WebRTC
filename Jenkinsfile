@@ -100,28 +100,39 @@ pipeline {
             }
         }
         
+        stage('Ansible Last Update') {
+            steps {
+                script {
+                    echo "Running Ansible last_update.yaml..."
+                    withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
+                        sh """
+                            cp $KUBECONFIG_FILE kubeconfig
+                            chmod 600 kubeconfig
+                            ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
+                                ~/webrtc-k8s-devsecops/ansible/playbooks/last_update.yaml \
+                                -e \"KUBECONFIG_CONTENT=$(cat kubeconfig)\"
+                            rm kubeconfig
+                        """
+                    }
+                }
+            }
+        }
+        
         stage('Deploy to Kubernetes with Ansible') {
             steps {
                 script {
                     echo "Deploying to Kubernetes cluster using Ansible..."
-                    
                     withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
                         sh """
-                            # Copy kubeconfig to workspace
                             cp $KUBECONFIG_FILE kubeconfig
                             chmod 600 kubeconfig
-                            
-                            # Run Ansible playbook
                             ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
-                                ~/webrtc-k8s-devsecops/ansible/playbooks/k8s-deploy.yml \
-                                -e "dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}" \
-                                -e "KUBECONFIG_CONTENT=$(cat kubeconfig)"
-                            
-                            # Clean up kubeconfig
+                                ~/webrtc-k8s-devsecops/kubernetes/manifests/webrtc-signaling/k8s-deploy.yml \
+                                -e \"dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}\" \
+                                -e \"KUBECONFIG_CONTENT=$(cat kubeconfig)\"
                             rm kubeconfig
                         """
                     }
-                    
                     echo "✅ Deployment completed successfully!"
                 }
             }
@@ -133,15 +144,12 @@ pipeline {
                     echo "Verifying deployment using Ansible..."
                     withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
                         sh """
-                            # Copy kubeconfig to workspace
                             cp $KUBECONFIG_FILE kubeconfig
                             chmod 600 kubeconfig
-                            # Run Ansible playbook for verification
                             ansible-playbook -i ~/webrtc-k8s-devsecops/ansible/inventory.ini \
-                                ~/webrtc-k8s-devsecops/ansible/playbooks/k8s-verify.yml \
+                                ~/webrtc-k8s-devsecops/kubernetes/manifests/webrtc-signaling/k8s-verify.yml \
                                 -e \"dockerhub_repo=${DOCKERHUB_REPO} build_number=${BUILD_NUMBER}\" \
                                 -e \"KUBECONFIG_CONTENT=$(cat kubeconfig)\"
-                            # Clean up kubeconfig
                             rm kubeconfig
                         """
                     }
