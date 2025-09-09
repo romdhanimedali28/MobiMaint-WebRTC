@@ -125,6 +125,21 @@ pipeline {
                         sh '''
                             ansible-playbook -i external-k8s-manifests/ansible/inventory.ini \
                                 external-k8s-manifests/kubernetes/manifests/k8s-deploy.yml \
+                                -e "KUBECONFIG_CONTENT=$(cat $KUBECONFIG_FILE | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Verifying Deploy to Kubernetes with Ansible') {
+            steps {
+                script {
+                    echo "Verifying deployment to Kubernetes cluster using Ansible..."
+                    withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
+                        sh '''
+                            ansible-playbook -i external-k8s-manifests/ansible/inventory.ini \
+                                external-k8s-manifests/kubernetes/manifests/k8s-verify.yml \
                                 -e "KUBECONFIG_CONTENT=$(cat $KUBECONFIG_FILE | python -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
                         '''
                     }
