@@ -157,10 +157,8 @@ pipeline {
                     echo "Deploying to Kubernetes cluster..."
                     withKubeConfig([credentialsId: 'k8s_config']) {
                         sh """
-                            # Update deployment with new image tag
-                            sed -i 's|medaliromdhani/webrtc-signaling-server:.*|medaliromdhani/webrtc-signaling-server:${BUILD_NUMBER}|g' k8s/deployment.yaml
                             # Apply Kubernetes manifests
-                            kubectl apply -f k8s/
+                            kubectl apply -f external-k8s-manifests/kubernetes/manifests/webrtc-signaling/
                             # Wait for deployment to complete
                             kubectl rollout status deployment/webrtc-signaling-server -n default --timeout=300s
                             echo "✅ Deployment completed successfully!"
