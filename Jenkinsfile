@@ -121,10 +121,13 @@ pipeline {
             steps {
                 script {
                     echo "Deploying to Kubernetes cluster using Ansible..."
-                    sh '''
-                        ansible-playbook -i external-k8s-manifests/ansible/inventory.ini \
-                            external-k8s-manifests/kubernetes/manifests/k8s-deploy.yml
-                    '''
+                    withCredentials([file(credentialsId: 'k8s-config', variable: 'KUBECONFIG_FILE')]) {
+                        sh '''
+                            ansible-playbook -i external-k8s-manifests/ansible/inventory.ini \
+                                external-k8s-manifests/kubernetes/manifests/k8s-deploy.yml \
+                                -e "KUBECONFIG_CONTENT=$(cat $KUBECONFIG_FILE | python -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
+                        '''
+                    }
                 }
             }
         }
