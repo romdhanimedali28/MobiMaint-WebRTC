@@ -1,11 +1,11 @@
-
+# MobiMaint WebRTC Signaling Server
 
 A real-time communication system built with Node.js, Socket.IO, and WebRTC for connecting Technicians with Experts in remote assistance scenarios. This project enables video calling, real-time annotations, and user presence management.
 
 ## 🚀 Features
 
 - **Real-time Video Communication**: WebRTC-based peer-to-peer video calling
-- **Role-based Access Control**: Separate roles for Technicians and Experts
+- **Role-based Access Control**: Separate roles for Technicians and Experts  
 - **Real-time Annotations**: Live drawing and annotation capabilities during calls
 - **User Presence Management**: Online/offline status tracking
 - **Call Management**: Create, join, and end calls with proper cleanup
@@ -41,10 +41,9 @@ npm install
 ```
 
 The main dependencies include:
-
 - `express`: Web application framework
 - `socket.io`: Real-time bidirectional event-based communication
-- `cors`: Cross-Origin Resource Sharing middleware
+- `cors`: Cross-Origin Resource Sharing middleware  
 - `uuid`: Unique identifier generation
 
 ### 3. Run the Server
@@ -66,14 +65,14 @@ The server will start on port 3000 (or the port specified in the PORT environmen
 
 The system comes with predefined users for testing:
 
-|Username|Password|Role|
-|---|---|---|
-|user1|P|Technician|
-|user2|P|Expert|
-|user3|p3|Expert|
-|user4|P|Expert|
-|user5|P|Expert|
-|uuser7|P|Expert|
+| Username | Password | Role |
+|----------|----------|------|
+| user1 | P | Technician |
+| user2 | P | Expert |
+| user3 | p3 | Expert |
+| user4 | P | Expert |
+| user5 | P | Expert |
+| uuser7 | P | Expert |
 
 ## 🌐 How WebRTC Works in This System
 
@@ -108,14 +107,12 @@ The system comes with predefined users for testing:
 ### Core Components
 
 #### 1. User Management
-
 ```javascript
 const userSockets = new Map(); // userId -> socketId mapping
 const users = [...]; // Hardcoded user database
 ```
 
-#### 2. Call Management
-
+#### 2. Call Management  
 ```javascript
 const activeCalls = new Map(); // callId -> call object mapping
 ```
@@ -123,13 +120,11 @@ const activeCalls = new Map(); // callId -> call object mapping
 ### Socket Event Flow
 
 #### Connection & Registration
-
 ```
 Client Connect → 'register' event → Store socket mapping → Broadcast status
 ```
 
 #### Call Creation & Management
-
 ```
 Technician → 'create-call' → Generate callId → Store in activeCalls
 Expert → 'call-request' → Forward to target user
@@ -138,7 +133,6 @@ Users → 'join-call' → Add to call room → Notify other participants
 ```
 
 #### WebRTC Signaling
-
 ```
 Client A → 'offer' → Server → Forward to Client B
 Client B → 'answer' → Server → Forward to Client A  
@@ -146,14 +140,12 @@ Both → 'ice-candidate' → Server → Forward to peer
 ```
 
 #### Real-time Features
-
 ```
 User → 'annotation' → Store in call → Broadcast to call room
 User → 'end-call' → Leave room → Notify participants → Cleanup
 ```
 
 #### Connection Management
-
 ```
 User → 'disconnect' → 2-second grace period → Mark offline → Cleanup calls
 User → 'reconnect-after-call' → Re-register → Update status
@@ -162,33 +154,28 @@ User → 'reconnect-after-call' → Re-register → Update status
 ## 📡 API Endpoints
 
 ### Authentication
-
 - `POST /login` - User authentication
 
 ### Call Management
-
 - `POST /api/create-call` - Create new call (Technicians only)
 - `GET /api/calls` - List active calls
 
-### User Management
-
+### User Management  
 - `GET /api/experts` - List available experts with status
 - `GET /api/users/status` - All users with online/offline status
 
 ### System Health
-
 - `GET /health` - Server health check
 
 ## 🔌 Socket Events
 
 ### Client → Server Events
-
 - `register` - Register user with socket
 - `call-request` - Request call to specific user
 - `call-response` - Accept/reject incoming call
 - `join-call` - Join existing call
 - `offer` - WebRTC offer exchange
-- `answer` - WebRTC answer exchange
+- `answer` - WebRTC answer exchange  
 - `ice-candidate` - ICE candidate exchange
 - `annotation` - Real-time annotation data
 - `end-call` - End current call
@@ -196,12 +183,11 @@ User → 'reconnect-after-call' → Re-register → Update status
 - `ping` - Heartbeat mechanism
 
 ### Server → Client Events
-
 - `user-status-change` - User online/offline status updates
 - `call-request` - Incoming call notification
 - `call-response` - Call acceptance/rejection response
 - `user-joined` - User joined call notification
-- `user-left` - User left call notification
+- `user-left` - User left call notification  
 - `existing-users` - Current call participants
 - `existing-annotations` - Current call annotations
 - `offer` - WebRTC offer from peer
@@ -215,11 +201,9 @@ User → 'reconnect-after-call' → Re-register → Update status
 ## 🔧 Configuration
 
 ### Environment Variables
-
 - `PORT`: Server port (default: 3000)
 
 ### CORS Configuration
-
 ```javascript
 cors: {
   origin: '*',
@@ -231,31 +215,25 @@ cors: {
 ## 🚦 Server Request & Socket Flow
 
 ### 1. HTTP Request Handling
-
 The server handles REST API requests for:
-
 - User authentication (`/login`)
-- Call creation (`/api/create-call`)
+- Call creation (`/api/create-call`)  
 - System information (`/api/calls`, `/api/experts`, `/health`)
 
 ### 2. Socket Connection Lifecycle
-
 ```
 Connection → Registration → Event Listening → Real-time Communication → Cleanup
 ```
 
 ### 3. Call State Management
-
 ```
 pending → active → ended
 ```
 
 ### 4. User Status Broadcasting
-
 When user status changes, the server broadcasts updates to all connected clients to maintain real-time presence information.
 
 ### 5. Graceful Cleanup
-
 - **Call End**: Remove user from call, maintain socket connection
 - **Disconnect**: 2-second grace period for reconnection
 - **Process Termination**: Graceful server shutdown on SIGTERM/SIGINT
@@ -263,7 +241,6 @@ When user status changes, the server broadcasts updates to all connected clients
 ## 🐛 Error Handling
 
 The server includes comprehensive error handling for:
-
 - Missing required fields in socket events
 - Invalid call states and user permissions
 - User not found scenarios
