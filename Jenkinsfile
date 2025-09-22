@@ -9,6 +9,8 @@ pipeline {
             script: "git rev-parse --short HEAD",
             returnStdout: true
         ).trim()
+        // Email recipients
+        EMAIL_RECIPIENTS = 'your-email@example.com,team@example.com'
     }
     
     stages {
@@ -31,24 +33,24 @@ pipeline {
             }
         }
         
-     stage('Build Docker Image') {
-    steps {
-        script {
-            echo "Building Docker image: ${DOCKERHUB_REPO}:${BUILD_NUMBER}"
-            
-            // Build the Docker image with --network host
-            sh """
-                docker build --network host -t ${DOCKERHUB_REPO}:${BUILD_NUMBER} .
-            """
-            
-            // Tag with additional tags
-            sh "docker tag ${DOCKERHUB_REPO}:${BUILD_NUMBER} ${DOCKERHUB_REPO}:latest"
-            sh "docker tag ${DOCKERHUB_REPO}:${BUILD_NUMBER} ${DOCKERHUB_REPO}:${GIT_COMMIT_SHORT}"
-            
-            echo "✅ Docker image built successfully"
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    echo "Building Docker image: ${DOCKERHUB_REPO}:${BUILD_NUMBER}"
+                    
+                    // Build the Docker image with --network host
+                    sh """
+                        docker build --network host -t ${DOCKERHUB_REPO}:${BUILD_NUMBER} .
+                    """
+                    
+                    // Tag with additional tags
+                    sh "docker tag ${DOCKERHUB_REPO}:${BUILD_NUMBER} ${DOCKERHUB_REPO}:latest"
+                    sh "docker tag ${DOCKERHUB_REPO}:${BUILD_NUMBER} ${DOCKERHUB_REPO}:${GIT_COMMIT_SHORT}"
+                    
+                    echo "✅ Docker image built successfully"
+                }
+            }
         }
-    }
-}
         
         stage('Test Docker Image') {
             steps {
@@ -116,11 +118,9 @@ pipeline {
             }
         }
 
-    
-
-stage('Deploy to Kubernetes with Ansible') {
-    steps {
-        script {
+        stage('Deploy to Kubernetes with Ansible') {
+            steps {
+                script {
                     echo "Deploying to Kubernetes cluster using Ansible..."
                     withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
                         sh '''
@@ -155,11 +155,109 @@ stage('Deploy to Kubernetes with Ansible') {
             echo "🐳 Docker Image: ${DOCKERHUB_REPO}:${BUILD_NUMBER}"
             echo "📋 Build: ${env.BUILD_NUMBER}"
             echo "🔗 Commit: ${env.GIT_COMMIT_SHORT}"
+            
+            // Email notification for success
+            emailext (
+                subject: "✅ SUCCESS: ${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                body: """
+                <h2 style="color: green;">Build Successful! 🎉</h2>
+                
+                <h3>Build Details:</h3>
+                <ul>
+                    <li><b>Job:</b> ${env.JOB_NAME}</li>
+                    <li><b>Build Number:</b> ${env.BUILD_NUMBER}</li>
+                    <li><b>Git Commit:</b> ${env.GIT_COMMIT_SHORT}</li>
+                    <li><b>Duration:</b> ${currentBuild.durationString}</li>
+                    <li><b>Build URL:</b> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></li>
+                </ul>
+                
+                <h3>Docker Images Pushed:</h3>
+                <ul>
+                    <li>${DOCKERHUB_REPO}:${BUILD_NUMBER}</li>
+                    <li>${DOCKERHUB_REPO}:latest</li>
+                    <li>${DOCKERHUB_REPO}:${GIT_COMMIT_SHORT}</li>
+                </ul>
+                
+                <h3>Deployment Status:</h3>
+                <p>✅ Successfully deployed to Kubernetes cluster</p>
+                
+                <p><i>Build completed at: ${new Date()}</i></p>
+                """,
+                mimeType: 'text/html',
+                to: "${EMAIL_RECIPIENTS}"
+            )
         }
         
         failure {
             echo "❌ Pipeline failed!"
             echo "Check the logs above for error details"
+            
+            // Email notification for failure
+            emailext (
+                subject: "❌ FAILED: ${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                body: """
+                <h2 style="color: red;">Build Failed! ❌</h2>
+                
+                <h3>Build Details:</h3>
+                <ul>
+                    <li><b>Job:</b> ${env.JOB_NAME}</li>
+                    <li><b>Build Number:</b> ${env.BUILD_NUMBER}</li>
+                    <li><b>Git Commit:</b> ${env.GIT_COMMIT_SHORT}</li>
+                    <li><b>Duration:</b> ${currentBuild.durationString}</li>
+                    <li><b>Failed Stage:</b> ${env.STAGE_NAME}</li>
+                </ul>
+                
+                <h3>Actions Required:</h3>
+                <ul>
+                    <li>Check the <a href="${env.BUILD_URL}console">build console output</a></li>
+                    <li>Review the failed stage logs</li>
+                    <li>Fix the issues and retry the build</li>
+                </ul>
+                
+                <h3>Quick Links:</h3>
+                <ul>
+                    <li><a href="${env.BUILD_URL}">Build Details</a></li>
+                    <li><a href="${env.BUILD_URL}console">Console Output</a></li>
+                    <li><a href="${env.JOB_URL}">Job Configuration</a></li>
+                </ul>
+                
+                <p><i>Build failed at: ${new Date()}</i></p>
+                """,
+                mimeType: 'text/html',
+                to: "${EMAIL_RECIPIENTS}"
+            )
+        }
+        
+        unstable {
+            echo "⚠️ Pipeline is unstable!"
+            
+            // Email notification for unstable build
+            emailext (
+                subject: "⚠️ UNSTABLE: ${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                body: """
+                <h2 style="color: orange;">Build Unstable! ⚠️</h2>
+                
+                <h3>Build Details:</h3>
+                <ul>
+                    <li><b>Job:</b> ${env.JOB_NAME}</li>
+                    <li><b>Build Number:</b> ${env.BUILD_NUMBER}</li>
+                    <li><b>Git Commit:</b> ${env.GIT_COMMIT_SHORT}</li>
+                    <li><b>Duration:</b> ${currentBuild.durationString}</li>
+                </ul>
+                
+                <p>The build completed but some tests failed or warnings were detected.</p>
+                
+                <h3>Actions:</h3>
+                <ul>
+                    <li>Review <a href="${env.BUILD_URL}testReport">test results</a></li>
+                    <li>Check <a href="${env.BUILD_URL}console">console output</a> for warnings</li>
+                </ul>
+                
+                <p><i>Build completed at: ${new Date()}</i></p>
+                """,
+                mimeType: 'text/html',
+                to: "${EMAIL_RECIPIENTS}"
+            )
         }
         
         always {
