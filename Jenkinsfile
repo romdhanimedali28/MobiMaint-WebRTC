@@ -151,7 +151,7 @@ pipeline {
     
     post {
         success {
-            echo "🎉 Pipeline completed successfully! "
+            echo "🎉 Pipeline completed successfully!"
             echo "🐳 Docker Image: ${DOCKERHUB_REPO}:${BUILD_NUMBER}"
             echo "📋 Build: ${env.BUILD_NUMBER}"
             echo "🔗 Commit: ${env.GIT_COMMIT_SHORT}"
