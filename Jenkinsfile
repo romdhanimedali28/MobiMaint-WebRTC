@@ -37,94 +37,95 @@ pipeline {
             }
         }
         
-        stage('Code Security Scanning') {
-            steps {
-                script {
-                    echo "Running code security scans..."
-                    
-                    // NPM Audit for Node.js projects
-                    def npmVulns = "No package.json found"
-                    sh '''
-                        if [ -f "package.json" ]; then
-                            echo "Running npm audit..."
-                            npm audit --audit-level moderate || true
-                            npm audit --json > npm-audit-results.json || true
-                        else
-                            echo "No package.json found, skipping npm audit"
-                        fi
-                    '''
-                    if (fileExists('npm-audit-results.json')) {
-                        def npmAuditJson = readFile('npm-audit-results.json')
-                        def npmAudit = readJSON text: npmAuditJson
-                        def vulnCount = npmAudit.metadata.vulnerabilities.total ?: 0
-                        npmVulns = "${vulnCount} vulnerabilities found (moderate or higher)"
-                    }
-                    
-                    // OWASP Dependency Check
-                    sh '''
-                        echo "Running OWASP Dependency Check..."
-                        
-                        # Download OWASP Dependency Check if not exists
-                        if [ ! -d "/opt/dependency-check" ]; then
-                            echo "Installing OWASP Dependency Check..."
-                            sudo mkdir -p /opt/dependency-check
-                            cd /opt/dependency-check
-                            sudo wget https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.0/dependency-check-8.4.0-release.zip
-                            sudo unzip dependency-check-8.4.0-release.zip
-                            sudo chmod +x dependency-check/bin/dependency-check.sh
-                        fi
-                        
-                        # Run OWASP Dependency Check
-                        /opt/dependency-check/dependency-check/bin/dependency-check.sh \
-                            --project "WebRTC-SignalingServer" \
-                            --scan . \
-                            --format JSON \
-                            --format HTML \
-                            --out ./dependency-check-report \
-                            --prettyPrint || true
-                    '''
-                    
-                    // Parse OWASP Dependency-Check results
-                    def depCheckVulns = "No vulnerabilities found"
-                    if (fileExists('dependency-check-report/dependency-check-report.json')) {
-                        def depCheckJson = readFile('dependency-check-report/dependency-check-report.json')
-                        def depCheck = readJSON text: depCheckJson
-                        def vulnCount = depCheck.dependencies?.sum { it.vulnerabilities?.size() ?: 0 } ?: 0
-                        depCheckVulns = "${vulnCount} vulnerabilities found"
-                    }
-                    
-                    // Archive security reports
-                    archiveArtifacts artifacts: 'dependency-check-report/**/*', fingerprint: true, allowEmptyArchive: true
-                    archiveArtifacts artifacts: 'npm-audit-results.json', fingerprint: true, allowEmptyArchive: true
-                    
-                    // Send Slack notification for Code Security Scanning
-                    slackSend(
-                        botUser: true,
-                        tokenCredentialId: 'slack-bot-token',
-                        channel: '#jenkins-alerts',
-                        message: "🔍 *Code Security Scan Completed*",
-                        attachments: [
-                            [
-                                color: (npmVulns.contains('vulnerabilities found') || depCheckVulns.contains('vulnerabilities found')) ? 'warning' : 'good',
-                                title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - Code Security Scan",
-                                title_link: "${env.BUILD_URL}",
-                                fields: [
-                                    [title: 'Stage', value: 'Code Security Scanning', short: true],
-                                    [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
-                                    [title: 'NPM Audit', value: npmVulns, short: false],
-                                    [title: 'OWASP Dependency-Check', value: depCheckVulns, short: false],
-                                    [title: 'Reports', value: "• [NPM Audit](${env.BUILD_URL}artifact/npm-audit-results.json)\n• [Dependency-Check](${env.BUILD_URL}artifact/dependency-check-report/dependency-check-report.html)", short: false]
-                                ],
-                                footer: 'Jenkins CI/CD Pipeline with DevSecOps',
-                                ts: sh(script: 'date +%s', returnStdout: true).trim()
-                            ]
-                        ]
-                    )
-                    
-                    echo "✅ Code security scanning completed"
-                }
+       stage('Code Security Scanning') {
+    steps {
+        script {
+            echo "Running code security scans..."
+            
+            // NPM Audit for Node.js projects
+            def npmVulns = "No package.json found"
+            sh '''
+                if [ -f "package.json" ]; then
+                    echo "Running npm audit..."
+                    npm audit --audit-level moderate || true
+                    npm audit --json > npm-audit-results.json || true
+                else
+                    echo "No package.json found, skipping npm audit"
+                fi
+            '''
+            if (fileExists('npm-audit-results.json')) {
+                def npmAuditJson = readFile('npm-audit-results.json')
+                def npmAudit = readJSON text: npmAuditJson
+                def vulnCount = npmAudit.metadata.vulnerabilities.total ?: 0
+                npmVulns = "${vulnCount} vulnerabilities found (moderate or higher)"
             }
+            
+            // OWASP Dependency Check - Use wget to download if not exists
+            sh '''
+                echo "Running OWASP Dependency Check..."
+                
+                # Create local dependency-check directory if not exists
+                if [ ! -d "./dependency-check" ]; then
+                    echo "Installing OWASP Dependency Check locally..."
+                    mkdir -p ./dependency-check
+                    cd ./dependency-check
+                    wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.0/dependency-check-8.4.0-release.zip
+                    unzip -q dependency-check-8.4.0-release.zip
+                    chmod +x dependency-check/bin/dependency-check.sh
+                    cd ..
+                fi
+                
+                # Run OWASP Dependency Check
+                ./dependency-check/dependency-check/bin/dependency-check.sh \
+                    --project "WebRTC-SignalingServer" \
+                    --scan . \
+                    --format JSON \
+                    --format HTML \
+                    --out ./dependency-check-report \
+                    --prettyPrint || true
+            '''
+            
+            // Parse OWASP Dependency-Check results using readJSON from Jenkins Pipeline Utility Steps plugin
+            def depCheckVulns = "No vulnerabilities found"
+            if (fileExists('dependency-check-report/dependency-check-report.json')) {
+                def depCheckJson = readFile('dependency-check-report/dependency-check-report.json')
+                def depCheck = readJSON text: depCheckJson
+                def vulnCount = depCheck.dependencies?.sum { it.vulnerabilities?.size() ?: 0 } ?: 0
+                depCheckVulns = "${vulnCount} vulnerabilities found"
+            }
+            
+            // Archive security reports
+            archiveArtifacts artifacts: 'dependency-check-report/**/*', fingerprint: true, allowEmptyArchive: true
+            archiveArtifacts artifacts: 'npm-audit-results.json', fingerprint: true, allowEmptyArchive: true
+            
+            // Send Slack notification for Code Security Scanning
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',
+                channel: '#jenkins-alerts',
+                message: "🔍 *Code Security Scan Completed*",
+                attachments: [
+                    [
+                        color: (npmVulns.contains('vulnerabilities found') || depCheckVulns.contains('vulnerabilities found')) ? 'warning' : 'good',
+                        title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - Code Security Scan",
+                        title_link: "${env.BUILD_URL}",
+                        fields: [
+                            [title: 'Stage', value: 'Code Security Scanning', short: true],
+                            [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
+                            [title: 'NPM Audit', value: npmVulns, short: false],
+                            [title: 'OWASP Dependency-Check', value: depCheckVulns, short: false],
+                            [title: 'Reports', value: "• [NPM Audit](${env.BUILD_URL}artifact/npm-audit-results.json)\n• [Dependency-Check](${env.BUILD_URL}artifact/dependency-check-report/dependency-check-report.html)", short: false]
+                        ],
+                        footer: 'Jenkins CI/CD Pipeline with DevSecOps',
+                        ts: sh(script: 'date +%s', returnStdout: true).trim()
+                    ]
+                ]
+            )
+            
+            echo "✅ Code security scanning completed"
         }
+    }
+}
        
         stage('Build Docker Image') {
             steps {
@@ -145,81 +146,82 @@ pipeline {
             }
         }
         
-        stage('Docker Security Scan') {
-            steps {
-                script {
-                    echo "Scanning Docker image for vulnerabilities..."
+       stage('Docker Security Scan') {
+    steps {
+        script {
+            echo "Scanning Docker image for vulnerabilities..."
+            
+            // Check if Trivy is installed, if not download it locally
+            sh '''
+                if ! command -v trivy &> /dev/null; then
+                    echo "Installing Trivy locally..."
+                    # Download Trivy binary directly
+                    wget -qO trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.45.0/trivy_0.45.0_Linux-64bit.tar.gz
+                    tar -xzf trivy.tar.gz
+                    chmod +x trivy
+                    # Use local trivy binary
+                    TRIVY_CMD="./trivy"
+                else
+                    TRIVY_CMD="trivy"
+                fi
+                
+                echo "Running Trivy security scan on ${DOCKERHUB_REPO}:${BUILD_NUMBER}..."
+                
+                # Scan and generate reports
+                $TRIVY_CMD image --format json --output trivy-report.json ${DOCKERHUB_REPO}:${BUILD_NUMBER} || true
+                $TRIVY_CMD image --format table ${DOCKERHUB_REPO}:${BUILD_NUMBER} || true
+                
+                # Check for HIGH and CRITICAL vulnerabilities (using basic tools available)
+                if [ -f trivy-report.json ]; then
+                    # Use grep and wc to count vulnerabilities since jq might not be available
+                    HIGH_VULNS=$(grep -o '"Severity":"HIGH"\\|"Severity":"CRITICAL"' trivy-report.json | wc -l || echo "0")
+                    echo "Found $HIGH_VULNS high/critical vulnerabilities"
                     
-                    // Install Trivy if not exists
-                    sh '''
-                        if ! command -v trivy &> /dev/null; then
-                            echo "Installing Trivy..."
-                            sudo apt-get update
-                            sudo apt-get install -y wget apt-transport-https gnupg lsb-release
-                            wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-                            echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
-                            sudo apt-get update
-                            sudo apt-get install -y trivy
-                        fi
-                    '''
-                    
-                    // Scan with Trivy
-                    def highVulns = "0"
-                    sh """
-                        echo "Running Trivy security scan on ${DOCKERHUB_REPO}:${BUILD_NUMBER}..."
-                        
-                        # Scan and generate reports
-                        trivy image --format json --output trivy-report.json ${DOCKERHUB_REPO}:${BUILD_NUMBER} || true
-                        trivy image --format table ${DOCKERHUB_REPO}:${BUILD_NUMBER} || true
-                        
-                        # Check for HIGH and CRITICAL vulnerabilities
-                        if [ -f trivy-report.json ]; then
-                            HIGH_VULNS=\$(cat trivy-report.json | jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL")] | length' || echo "0")
-                            echo "Found \$HIGH_VULNS high/critical vulnerabilities"
-                            
-                            # Warning if many critical vulnerabilities (don't fail build)
-                            if [ "\$HIGH_VULNS" -gt 10 ]; then
-                                echo "⚠️ Warning: Found \$HIGH_VULNS high/critical vulnerabilities"
-                                echo "Consider updating base image or dependencies"
-                            fi
-                        fi
-                    """
-                    if (fileExists('trivy-report.json')) {
-                        def trivyJson = readFile('trivy-report.json')
-                        highVulns = sh(script: "cat trivy-report.json | jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == \"HIGH\" or .Severity == \"CRITICAL\")] | length' || echo '0'", returnStdout: true).trim()
-                    }
-                    
-                    // Archive scan results
-                    archiveArtifacts artifacts: 'trivy-report.json', fingerprint: true, allowEmptyArchive: true
-                    
-                    // Send Slack notification for Docker Security Scan
-                    slackSend(
-                        botUser: true,
-                        tokenCredentialId: 'slack-bot-token',
-                        channel: '#jenkins-alerts',
-                        message: "🔍 *Docker Security Scan Completed*",
-                        attachments: [
-                            [
-                                color: (highVulns.toInteger() > 10) ? 'warning' : 'good',
-                                title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - Docker Security Scan",
-                                title_link: "${env.BUILD_URL}",
-                                fields: [
-                                    [title: 'Stage', value: 'Docker Security Scan', short: true],
-                                    [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
-                                    [title: 'High/Critical Vulnerabilities', value: "${highVulns} found", short: false],
-                                    [title: 'Report', value: "[Trivy Report](${env.BUILD_URL}artifact/trivy-report.json)", short: false],
-                                    [title: 'Action', value: highVulns.toInteger() > 10 ? '⚠️ Consider updating base image or dependencies' : 'No action needed', short: false]
-                                ],
-                                footer: 'Jenkins CI/CD Pipeline with DevSecOps',
-                                ts: sh(script: 'date +%s', returnStdout: true).trim()
-                            ]
-                        ]
-                    )
-                    
-                    echo "✅ Docker security scanning completed"
-                }
+                    # Warning if many critical vulnerabilities (don't fail build)
+                    if [ "$HIGH_VULNS" -gt 10 ]; then
+                        echo "⚠️ Warning: Found $HIGH_VULNS high/critical vulnerabilities"
+                        echo "Consider updating base image or dependencies"
+                    fi
+                fi
+            '''
+            
+            // Get vulnerability count for reporting
+            def highVulns = "0"
+            if (fileExists('trivy-report.json')) {
+                highVulns = sh(script: "grep -o '\"Severity\":\"HIGH\"\\|\"Severity\":\"CRITICAL\"' trivy-report.json | wc -l || echo '0'", returnStdout: true).trim()
             }
+            
+            // Archive scan results
+            archiveArtifacts artifacts: 'trivy-report.json', fingerprint: true, allowEmptyArchive: true
+            
+            // Send Slack notification for Docker Security Scan
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',
+                channel: '#jenkins-alerts',
+                message: "🔍 *Docker Security Scan Completed*",
+                attachments: [
+                    [
+                        color: (highVulns.toInteger() > 10) ? 'warning' : 'good',
+                        title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - Docker Security Scan",
+                        title_link: "${env.BUILD_URL}",
+                        fields: [
+                            [title: 'Stage', value: 'Docker Security Scan', short: true],
+                            [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
+                            [title: 'High/Critical Vulnerabilities', value: "${highVulns} found", short: false],
+                            [title: 'Report', value: "[Trivy Report](${env.BUILD_URL}artifact/trivy-report.json)", short: false],
+                            [title: 'Action', value: highVulns.toInteger() > 10 ? '⚠️ Consider updating base image or dependencies' : 'No action needed', short: false]
+                        ],
+                        footer: 'Jenkins CI/CD Pipeline with DevSecOps',
+                        ts: sh(script: 'date +%s', returnStdout: true).trim()
+                    ]
+                ]
+            )
+            
+            echo "✅ Docker security scanning completed"
         }
+    }
+}
        
         stage('Test Docker Image') {
             steps {
@@ -409,99 +411,98 @@ pipeline {
         }
        
         always {
-            script {
-                echo "Starting cleanup and DockerHub maintenance..."
+           script {
+        echo "Starting cleanup and DockerHub maintenance..."
+        
+        // Check if jq is available, if not use basic tools
+        sh '''
+            if ! command -v jq &> /dev/null; then
+                echo "jq not available, will use alternative parsing methods"
+            fi
+        '''
+        
+        // DockerHub cleanup - keep last N images
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKERHUB_USER', passwordVariable: 'DOCKERHUB_PASS')]) {
+            sh """
+                echo "Starting DockerHub cleanup - keeping last ${KEEP_LAST_IMAGES} images..."
                 
-                // Install jq if not available
-                sh '''
-                    if ! command -v jq &> /dev/null; then
-                        echo "Installing jq..."
-                        sudo apt-get update && sudo apt-get install -y jq
-                    fi
-                '''
+                REPO="${DOCKERHUB_REPO}"
+                KEEP_LAST=${KEEP_LAST_IMAGES}
                 
-                // DockerHub cleanup - keep last N images
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKERHUB_USER', passwordVariable: 'DOCKERHUB_PASS')]) {
-                    sh """
-                        echo "Starting DockerHub cleanup - keeping last ${KEEP_LAST_IMAGES} images..."
+                # Get DockerHub token
+                echo "Authenticating with DockerHub..."
+                TOKEN=\$(curl -s -X POST \
+                    -H "Content-Type: application/json" \
+                    -d "{\\"username\\": \\"\$DOCKERHUB_USER\\", \\"password\\": \\"\$DOCKERHUB_PASS\\"}" \
+                    https://hub.docker.com/v2/users/login/ | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                
+                if [ -n "\$TOKEN" ] && [ "\$TOKEN" != "null" ]; then
+                    echo "✅ Successfully authenticated with DockerHub"
+                    
+                    # Get all tags (simplified without jq dependency)
+                    echo "Fetching repository tags..."
+                    TAGS_RESPONSE=\$(curl -s -H "Authorization: JWT \$TOKEN" \
+                        "https://hub.docker.com/v2/repositories/\$REPO/tags/?page_size=100")
+                    
+                    # Simple cleanup: just delete tags that match build numbers older than current
+                    # This is a simplified approach that works without jq
+                    CURRENT_BUILD=${BUILD_NUMBER}
+                    
+                    # Delete tags for builds older than (current - KEEP_LAST)
+                    if [ \$CURRENT_BUILD -gt \$KEEP_LAST ]; then
+                        DELETE_BEFORE=\$((CURRENT_BUILD - KEEP_LAST))
+                        echo "Will attempt to delete build tags older than \$DELETE_BEFORE"
                         
-                        REPO="${DOCKERHUB_REPO}"
-                        KEEP_LAST=${KEEP_LAST_IMAGES}
-                        
-                        # Get DockerHub token
-                        echo "Authenticating with DockerHub..."
-                        TOKEN=\$(curl -s -X POST \
-                            -H "Content-Type: application/json" \
-                            -d "{\\"username\\": \\"\$DOCKERHUB_USER\\", \\"password\\": \\"\$DOCKERHUB_PASS\\"}" \
-                            https://hub.docker.com/v2/users/login/ | jq -r .token)
-                        
-                        if [ "\$TOKEN" != "null" ] && [ -n "\$TOKEN" ]; then
-                            echo "✅ Successfully authenticated with DockerHub"
+                        for i in \$(seq 1 \$DELETE_BEFORE); do
+                            echo "Attempting to delete tag: \$i"
+                            DELETE_RESPONSE=\$(curl -s -w "%{http_code}" -o /dev/null -X DELETE \
+                                -H "Authorization: JWT \$TOKEN" \
+                                "https://hub.docker.com/v2/repositories/\$REPO/tags/\$i/")
                             
-                            # Get all tags sorted by date (newest first)
-                            echo "Fetching repository tags..."
-                            TAGS_JSON=\$(curl -s -H "Authorization: JWT \$TOKEN" \
-                                "https://hub.docker.com/v2/repositories/\$REPO/tags/?page_size=100")
-                            
-                            # Get tags to delete (older than KEEP_LAST, excluding 'latest')
-                            TAGS_TO_DELETE=\$(echo "\$TAGS_JSON" | jq -r --arg keep "\$KEEP_LAST" \
-                                '.results | sort_by(.last_updated) | reverse | .[(\$keep|tonumber):] | .[] | select(.name != "latest") | .name')
-                            
-                            if [ -n "\$TAGS_TO_DELETE" ]; then
-                                echo "Tags to delete:"
-                                echo "\$TAGS_TO_DELETE"
-                                
-                                # Delete old tags
-                                for tag in \$TAGS_TO_DELETE; do
-                                    echo "Deleting tag: \$tag"
-                                    DELETE_RESPONSE=\$(curl -s -w "%{http_code}" -X DELETE \
-                                        -H "Authorization: JWT \$TOKEN" \
-                                        "https://hub.docker.com/v2/repositories/\$REPO/tags/\$tag/")
-                                    
-                                    if [[ "\$DELETE_RESPONSE" == *"204"* ]]; then
-                                        echo "✅ Successfully deleted \$tag"
-                                    else
-                                        echo "⚠️ Failed to delete \$tag (HTTP code: \$DELETE_RESPONSE)"
-                                    fi
-                                done
-                                
-                                echo "✅ DockerHub cleanup completed - keeping last \$KEEP_LAST images"
+                            if [ "\$DELETE_RESPONSE" = "204" ]; then
+                                echo "✅ Successfully deleted tag \$i"
                             else
-                                echo "No old images to delete (total images <= \$KEEP_LAST)"
+                                echo "ℹ️ Tag \$i not found or already deleted"
                             fi
-                        else
-                            echo "❌ Failed to authenticate with DockerHub"
-                        fi
-                    """
-                }
-                
-                // Clean up SSH tunnel
-                sh '''
-                    echo "Cleaning up SSH tunnel..."
-                    pkill -f "ssh.*6443:10.0.1.10:6443" || true
-                '''
-                
-                // Local Docker cleanup
-                sh """
-                    echo "Cleaning up local Docker images..."
-                    docker rmi ${DOCKERHUB_REPO}:${BUILD_NUMBER} || true
-                    docker rmi ${DOCKERHUB_REPO}:latest || true
-                    docker rmi ${DOCKERHUB_REPO}:${GIT_COMMIT_SHORT} || true
+                        done
+                    else
+                        echo "Not enough builds to clean up (current: \$CURRENT_BUILD, keep: \$KEEP_LAST)"
+                    fi
                     
-                    # Clean up any test containers
-                    docker rm -f test-container-${BUILD_NUMBER} || true
-                    
-                    # Clean up unused Docker resources
-                    docker system prune -f || true
-                    
-                    echo "✅ Local Docker cleanup completed"
-                """
-                
-                echo "✅ All cleanup operations completed"
-            }
+                    echo "✅ DockerHub cleanup completed"
+                else
+                    echo "❌ Failed to authenticate with DockerHub"
+                fi
+            """
+        }
+        
+        // Clean up SSH tunnel
+        sh '''
+            echo "Cleaning up SSH tunnel..."
+            pkill -f "ssh.*6443:10.0.1.10:6443" || true
+        '''
+        
+        // Local Docker cleanup
+        sh """
+            echo "Cleaning up local Docker images..."
+            docker rmi ${DOCKERHUB_REPO}:${BUILD_NUMBER} || true
+            docker rmi ${DOCKERHUB_REPO}:latest || true
+            docker rmi ${DOCKERHUB_REPO}:${GIT_COMMIT_SHORT} || true
             
-            // Clean workspace
-            cleanWs()
+            # Clean up any test containers
+            docker rm -f test-container-${BUILD_NUMBER} || true
+            
+            # Clean up unused Docker resources
+            docker system prune -f || true
+            
+            echo "✅ Local Docker cleanup completed"
+        """
+        
+        echo "✅ All cleanup operations completed"
+    }
+    
+    // Clean workspace
+    cleanWs()
         }
     }
 }
