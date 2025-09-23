@@ -38,12 +38,6 @@ pipeline {
         }
         
        stage('Code Security Scanning') {
-        agent {
-        docker {
-            image 'node:20'
-            args '--user root'
-        }
-    }
             steps {
         script {
             
@@ -52,7 +46,6 @@ pipeline {
             // NPM Audit for Node.js projects
             def npmVulns = "No package.json found"
             sh '''
-                ls -la
                 if [ -f "package.json" ]; then
                     echo "Running npm audit..."
                     npm audit --audit-level moderate || true
