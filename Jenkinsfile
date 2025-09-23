@@ -9,9 +9,6 @@ pipeline {
             script: "git rev-parse --short HEAD",
             returnStdout: true
         ).trim()
-        
-        // Email configuration
-        EMAIL_RECIPIENTS = 'romdhanimohamedali.28@gmail.com'
     }
    
     stages {
@@ -157,227 +154,90 @@ pipeline {
             echo "📋 Build: ${env.BUILD_NUMBER}"
             echo "🔗 Commit: ${env.GIT_COMMIT_SHORT}"
             
-            // Slack notification for success using curl (reliable method)
-            script {
-                withCredentials([string(credentialsId: 'slack-bot-token', variable: 'SLACK_TOKEN')]) {
-                    sh """
-                    curl -X POST -H 'Authorization: Bearer ${SLACK_TOKEN}' \
-                    -H 'Content-type: application/json' \
-                    --data '{
-                        "channel": "jenkins-alerts",
-                        "text": "✅ *BUILD SUCCESSFUL*",
-                        "attachments": [
-                            {
-                                "color": "good",
-                                "title": "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
-                                "title_link": "${env.BUILD_URL}",
-                                "fields": [
-                                    {
-                                        "title": "Status",
-                                        "value": "✅ SUCCESS",
-                                        "short": true
-                                    },
-                                    {
-                                        "title": "Duration",
-                                        "value": "${currentBuild.durationString}",
-                                        "short": true
-                                    },
-                                    {
-                                        "title": "Git Commit",
-                                        "value": "${env.GIT_COMMIT_SHORT}",
-                                        "short": true
-                                    },
-                                    {
-                                        "title": "Branch",
-                                        "value": "${env.BRANCH_NAME ?: 'main'}",
-                                        "short": true
-                                    },
-                                    {
-                                        "title": "Docker Images",
-                                        "value": "• ${DOCKERHUB_REPO}:${BUILD_NUMBER}\\n• ${DOCKERHUB_REPO}:latest\\n• ${DOCKERHUB_REPO}:${env.GIT_COMMIT_SHORT}",
-                                        "short": false
-                                    },
-                                    {
-                                        "title": "Deployment",
-                                        "value": "✅ Successfully deployed to Kubernetes cluster",
-                                        "short": false
-                                    }
-                                ],
-                                "footer": "Jenkins CI/CD Pipeline",
-                                "ts": \$(date +%s)
-                            }
-                        ]
-                    }' \
-                    https://slack.com/api/chat.postMessage
-                    """
-                }
-            }
-           
-            // Email notification for success
-            emailext (
-                subject: "✅ SUCCESS: ${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
-                body: """
-                <h2 style="color: green;">Build Successful! 🎉</h2>
-               
-                <h3>Build Details:</h3>
-                <ul>
-                    <li><b>Job:</b> ${env.JOB_NAME}</li>
-                    <li><b>Build Number:</b> ${env.BUILD_NUMBER}</li>
-                    <li><b>Git Commit:</b> ${env.GIT_COMMIT_SHORT}</li>
-                    <li><b>Branch:</b> ${env.BRANCH_NAME ?: 'main'}</li>
-                    <li><b>Duration:</b> ${currentBuild.durationString}</li>
-                    <li><b>Build URL:</b> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></li>
-                </ul>
-               
-                <h3>Docker Images Pushed:</h3>
-                <ul>
-                    <li>${DOCKERHUB_REPO}:${BUILD_NUMBER}</li>
-                    <li>${DOCKERHUB_REPO}:latest</li>
-                    <li>${DOCKERHUB_REPO}:${GIT_COMMIT_SHORT}</li>
-                </ul>
-               
-                <h3>Deployment Status:</h3>
-                <p>✅ Successfully deployed to Kubernetes cluster</p>
-               
-                <p><i>Build completed at: ${new Date()}</i></p>
-                """,
-                mimeType: 'text/html',
-                to: "${EMAIL_RECIPIENTS}"
+            // Slack notification for success using slackSend
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',  // Replace with your actual bot token credential ID
+                channel: '#jenkins-alerts',
+                message: "✅ *BUILD SUCCESSFUL*",
+                attachments: [
+                    [
+                        color: 'good',
+                        title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                        title_link: "${env.BUILD_URL}",
+                        fields: [
+                            [title: 'Status', value: '✅ SUCCESS', short: true],
+                            [title: 'Duration', value: "${currentBuild.durationString}", short: true],
+                            [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
+                            [title: 'Branch', value: "${env.BRANCH_NAME ?: 'main'}", short: true],
+                            [title: 'Docker Images', value: "• ${DOCKERHUB_REPO}:${BUILD_NUMBER}\n• ${DOCKERHUB_REPO}:latest\n• ${DOCKERHUB_REPO}:${env.GIT_COMMIT_SHORT}", short: false],
+                            [title: 'Deployment', value: '✅ Successfully deployed to Kubernetes cluster', short: false]
+                        ],
+                        footer: 'Jenkins CI/CD Pipeline',
+                        ts: sh(script: 'date +%s', returnStdout: true).trim()
+                    ]
+                ]
             )
+           
+           
         }
        
         failure {
             echo "❌ Pipeline failed!"
             echo "Check the logs above for error details"
             
-            // Slack notification for failure using curl
-            script {
-                withCredentials([string(credentialsId: 'slack-bot-token', variable: 'SLACK_TOKEN')]) {
-                    sh """
-                    curl -X POST -H 'Authorization: Bearer ${SLACK_TOKEN}' \
-                    -H 'Content-type: application/json' \
-                    --data '{
-                        "channel": "jenkins-alerts",
-                        "text": "❌ *BUILD FAILED*",
-                        "attachments": [
-                            {
-                                "color": "danger",
-                                "title": "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
-                                "title_link": "${env.BUILD_URL}",
-                                "fields": [
-                                    {
-                                        "title": "Status",
-                                        "value": "❌ FAILED",
-                                        "short": true
-                                    },
-                                    {
-                                        "title": "Duration",
-                                        "value": "${currentBuild.durationString}",
-                                        "short": true
-                                    },
-                                    {
-                                        "title": "Git Commit",
-                                        "value": "${env.GIT_COMMIT_SHORT}",
-                                        "short": true
-                                    },
-                                    {
-                                        "title": "Failed Stage",
-                                        "value": "${env.STAGE_NAME ?: 'Unknown'}",
-                                        "short": true
-                                    },
-                                    {
-                                        "title": "Actions Required",
-                                        "value": "• Check console output\\n• Review failed stage logs\\n• Fix issues and retry",
-                                        "short": false
-                                    }
-                                ],
-                                "footer": "Jenkins CI/CD Pipeline",
-                                "ts": \$(date +%s)
-                            }
-                        ]
-                    }' \
-                    https://slack.com/api/chat.postMessage
-                    """
-                }
-            }
-           
-            // Email notification for failure
-            emailext (
-                subject: "❌ FAILED: ${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
-                body: """
-                <h2 style="color: red;">Build Failed! ❌</h2>
-               
-                <h3>Build Details:</h3>
-                <ul>
-                    <li><b>Job:</b> ${env.JOB_NAME}</li>
-                    <li><b>Build Number:</b> ${env.BUILD_NUMBER}</li>
-                    <li><b>Git Commit:</b> ${env.GIT_COMMIT_SHORT}</li>
-                    <li><b>Duration:</b> ${currentBuild.durationString}</li>
-                    <li><b>Failed Stage:</b> ${env.STAGE_NAME ?: 'Unknown'}</li>
-                </ul>
-               
-                <h3>Actions Required:</h3>
-                <ul>
-                    <li>Check the <a href="${env.BUILD_URL}console">build console output</a></li>
-                    <li>Review the failed stage logs</li>
-                    <li>Fix the issues and retry the build</li>
-                </ul>
-               
-                <p><i>Build failed at: ${new Date()}</i></p>
-                """,
-                mimeType: 'text/html',
-                to: "${EMAIL_RECIPIENTS}"
+            // Slack notification for failure using slackSend
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',  // Replace with your actual bot token credential ID
+                channel: '#jenkins-alerts',
+                message: "❌ *BUILD FAILED*",
+                attachments: [
+                    [
+                        color: 'danger',
+                        title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                        title_link: "${env.BUILD_URL}",
+                        fields: [
+                            [title: 'Status', value: '❌ FAILED', short: true],
+                            [title: 'Duration', value: "${currentBuild.durationString}", short: true],
+                            [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
+                            [title: 'Failed Stage', value: "${env.STAGE_NAME ?: 'Unknown'}", short: true],
+                            [title: 'Actions Required', value: '• Check console output\n• Review failed stage logs\n• Fix issues and retry', short: false]
+                        ],
+                        footer: 'Jenkins CI/CD Pipeline',
+                        ts: sh(script: 'date +%s', returnStdout: true).trim()
+                    ]
+                ]
             )
+           
+          
         }
        
         unstable {
             echo "⚠️ Pipeline is unstable!"
             
-            // Slack notification for unstable build using curl
-            script {
-                withCredentials([string(credentialsId: 'slack-bot-token', variable: 'SLACK_TOKEN')]) {
-                    sh """
-                    curl -X POST -H 'Authorization: Bearer ${SLACK_TOKEN}' \
-                    -H 'Content-type: application/json' \
-                    --data '{
-                        "channel": "jenkins-alerts",
-                        "text": "⚠️ *BUILD UNSTABLE*",
-                        "attachments": [
-                            {
-                                "color": "warning",
-                                "title": "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
-                                "title_link": "${env.BUILD_URL}",
-                                "fields": [
-                                    {
-                                        "title": "Status",
-                                        "value": "⚠️ UNSTABLE",
-                                        "short": true
-                                    },
-                                    {
-                                        "title": "Duration",
-                                        "value": "${currentBuild.durationString}",
-                                        "short": true
-                                    },
-                                    {
-                                        "title": "Git Commit",
-                                        "value": "${env.GIT_COMMIT_SHORT}",
-                                        "short": true
-                                    },
-                                    {
-                                        "title": "Issue",
-                                        "value": "Build completed but some tests failed or warnings detected",
-                                        "short": false
-                                    }
-                                ],
-                                "footer": "Jenkins CI/CD Pipeline",
-                                "ts": \$(date +%s)
-                            }
-                        ]
-                    }' \
-                    https://slack.com/api/chat.postMessage
-                    """
-                }
-            }
+            // Slack notification for unstable build using slackSend
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',  // Replace with your actual bot token credential ID
+                channel: '#jenkins-alerts',
+                message: "⚠️ *BUILD UNSTABLE*",
+                attachments: [
+                    [
+                        color: 'warning',
+                        title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                        title_link: "${env.BUILD_URL}",
+                        fields: [
+                            [title: 'Status', value: '⚠️ UNSTABLE', short: true],
+                            [title: 'Duration', value: "${currentBuild.durationString}", short: true],
+                            [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
+                            [title: 'Issue', value: 'Build completed but some tests failed or warnings detected', short: false]
+                        ],
+                        footer: 'Jenkins CI/CD Pipeline',
+                        ts: sh(script: 'date +%s', returnStdout: true).trim()
+                    ]
+                ]
+            )
         }
        
         always {
