@@ -38,13 +38,14 @@ pipeline {
         }
         
        stage('Code Security Scanning') {
-    steps {
+            steps {
         script {
             echo "Running code security scans..."
             
             // NPM Audit for Node.js projects
             def npmVulns = "No package.json found"
             sh '''
+                ls -la
                 if [ -f "package.json" ]; then
                     echo "Running npm audit..."
                     npm audit --audit-level moderate || true
