@@ -40,6 +40,13 @@ pipeline {
        stage('Code Security Scanning') {
             steps {
         script {
+            sh '''
+                if ! command -v npm &> /dev/null; then
+                    echo "Installing Node.js and npm..."
+                    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+                    apt-get update && apt-get install -y nodejs
+                fi
+            '''
             echo "Running code security scans..."
             
             // NPM Audit for Node.js projects
