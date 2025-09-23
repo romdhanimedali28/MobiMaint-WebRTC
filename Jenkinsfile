@@ -37,94 +37,114 @@ pipeline {
             }
         }
         
-        stage('Code Security Scanning') {
-            steps {
-                script {
-                    echo "Running code security scans..."
-                    
-                    // NPM Audit for Node.js projects
-                    def npmVulns = "No package.json found"
-                    sh '''
-                        if [ -f "package.json" ]; then
-                            echo "Running npm audit..."
-                            npm audit --audit-level moderate || true
-                            npm audit --json > npm-audit-results.json || true
-                        else
-                            echo "No package.json found, skipping npm audit"
-                        fi
-                    '''
-                    if (fileExists('npm-audit-results.json')) {
-                        def npmAuditJson = readJSON file: 'npm-audit-results.json'
+       stage('Code Security Scanning') {
+    steps {
+        script {
+            echo "Running code security scans..."
+            
+            // NPM Audit for Node.js projects
+            def npmVulns = "No package.json found"
+            sh '''
+                if [ -f "package.json" ]; then
+                    echo "Running npm audit..."
+                    npm audit --audit-level moderate || true
+                    npm audit --json > npm-audit-results.json || true
+                else
+                    echo "No package.json found, skipping npm audit"
+                fi
+            '''
+            if (fileExists('npm-audit-results.json') && sh(script: '[ -s npm-audit-results.json ]', returnStatus: true) == 0) {
+                def npmContent = readFile('npm-audit-results.json').trim()
+                if (npmContent) {
+                    try {
+                        def npmAuditJson = readJSON text: npmContent
                         def vulnCount = npmAuditJson.metadata?.vulnerabilities?.total ?: 0
                         npmVulns = "${vulnCount} vulnerabilities found (moderate or higher)"
+                    } catch (Exception e) {
+                        echo "Warning: Failed to parse npm-audit-results.json: ${e.message}. Using fallback count."
+                        npmVulns = "Parse error - check report manually"
                     }
-                    
-                    // OWASP Dependency Check
-                    sh '''
-                        echo "Running OWASP Dependency Check..."
-                        
-                        # Create local dependency-check directory if not exists
-                        if [ ! -d "./dependency-check" ]; then
-                            echo "Installing OWASP Dependency Check locally..."
-                            mkdir -p ./dependency-check
-                            cd ./dependency-check
-                            wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.0/dependency-check-8.4.0-release.zip
-                            unzip -q dependency-check-8.4.0-release.zip
-                            chmod +x dependency-check/bin/dependency-check.sh
-                            cd ..
-                        fi
-                        
-                        # Run OWASP Dependency Check
-                        ./dependency-check/dependency-check/bin/dependency-check.sh \
-                            --project "WebRTC-SignalingServer" \
-                            --scan . \
-                            --format JSON \
-                            --format HTML \
-                            --out ./dependency-check-report \
-                            --prettyPrint || true
-                    '''
-                    
-                    // Parse OWASP Dependency-Check results
-                    def depCheckVulns = "No vulnerabilities found"
-                    if (fileExists('dependency-check-report/dependency-check-report.json')) {
-                        def depCheckJson = readJSON file: 'dependency-check-report/dependency-check-report.json'
-                        def vulnCount = depCheckJson.dependencies?.sum { it.vulnerabilities?.size() ?: 0 } ?: 0
-                        depCheckVulns = "${vulnCount} vulnerabilities found"
-                    }
-                    
-                    // Archive security reports
-                    archiveArtifacts artifacts: 'dependency-check-report/**/*', fingerprint: true, allowEmptyArchive: true
-                    archiveArtifacts artifacts: 'npm-audit-results.json', fingerprint: true, allowEmptyArchive: true
-                    
-                    // Send Slack notification for Code Security Scanning
-                    slackSend(
-                        botUser: true,
-                        tokenCredentialId: 'slack-bot-token',
-                        channel: '#jenkins-alerts',
-                        message: "🔍 *Code Security Scan Completed*",
-                        attachments: [
-                            [
-                                color: (npmVulns.contains('vulnerabilities found') || depCheckVulns.contains('vulnerabilities found')) ? 'warning' : 'good',
-                                title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - Code Security Scan",
-                                title_link: "${env.BUILD_URL}",
-                                fields: [
-                                    [title: 'Stage', value: 'Code Security Scanning', short: true],
-                                    [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
-                                    [title: 'NPM Audit', value: npmVulns, short: false],
-                                    [title: 'OWASP Dependency-Check', value: depCheckVulns, short: false],
-                                    [title: 'Reports', value: "• [NPM Audit](${env.BUILD_URL}artifact/npm-audit-results.json)\n• [Dependency-Check](${env.BUILD_URL}artifact/dependency-check-report/dependency-check-report.html)", short: false]
-                                ],
-                                footer: 'Jenkins CI/CD Pipeline with DevSecOps',
-                                ts: sh(script: 'date +%s', returnStdout: true).trim()
-                            ]
-                        ]
-                    )
-                    
-                    echo "✅ Code security scanning completed"
+                } else {
+                    npmVulns = "0 vulnerabilities (empty report)"
                 }
             }
+            
+            // OWASP Dependency Check
+            sh '''
+                echo "Running OWASP Dependency Check..."
+                
+                # Create local dependency-check directory if not exists
+                if [ ! -d "./dependency-check" ]; then
+                    echo "Installing OWASP Dependency Check locally..."
+                    mkdir -p ./dependency-check
+                    cd ./dependency-check
+                    wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.0/dependency-check-8.4.0-release.zip
+                    unzip -q dependency-check-8.4.0-release.zip
+                    chmod +x dependency-check/bin/dependency-check.sh
+                    cd ..
+                fi
+                
+                # Run OWASP Dependency Check
+                ./dependency-check/dependency-check/bin/dependency-check.sh \
+                    --project "WebRTC-SignalingServer" \
+                    --scan . \
+                    --format JSON \
+                    --format HTML \
+                    --out ./dependency-check-report \
+                    --prettyPrint || true
+            '''
+            
+            // Parse OWASP Dependency-Check results
+            def depCheckVulns = "No vulnerabilities found"
+            def depCheckReportPath = 'dependency-check-report/dependency-check-report.json'
+            if (fileExists(depCheckReportPath) && sh(script: "[ -s ${depCheckReportPath} ]", returnStatus: true) == 0) {
+                def depCheckContent = readFile(depCheckReportPath).trim()
+                if (depCheckContent) {
+                    try {
+                        def depCheckJson = readJSON text: depCheckContent
+                        def vulnCount = depCheckJson.dependencies?.sum { it.vulnerabilities?.size() ?: 0 } ?: 0
+                        depCheckVulns = "${vulnCount} vulnerabilities found"
+                    } catch (Exception e) {
+                        echo "Warning: Failed to parse dependency-check-report.json: ${e.message}. Using fallback count."
+                        depCheckVulns = "Parse error - check report manually"
+                    }
+                } else {
+                    depCheckVulns = "0 vulnerabilities (empty report)"
+                }
+            }
+            
+            // Archive security reports
+            archiveArtifacts artifacts: 'dependency-check-report/**/*', fingerprint: true, allowEmptyArchive: true
+            archiveArtifacts artifacts: 'npm-audit-results.json', fingerprint: true, allowEmptyArchive: true
+            
+            // Send Slack notification (unchanged)
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',
+                channel: '#jenkins-alerts',
+                message: "🔍 *Code Security Scan Completed*",
+                attachments: [
+                    [
+                        color: (npmVulns.contains('vulnerabilities found') || depCheckVulns.contains('vulnerabilities found')) ? 'warning' : 'good',
+                        title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - Code Security Scan",
+                        title_link: "${env.BUILD_URL}",
+                        fields: [
+                            [title: 'Stage', value: 'Code Security Scanning', short: true],
+                            [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
+                            [title: 'NPM Audit', value: npmVulns, short: false],
+                            [title: 'OWASP Dependency-Check', value: depCheckVulns, short: false],
+                            [title: 'Reports', value: "• [NPM Audit](${env.BUILD_URL}artifact/npm-audit-results.json)\n• [Dependency-Check](${env.BUILD_URL}artifact/dependency-check-report/dependency-check-report.html)", short: false]
+                        ],
+                        footer: 'Jenkins CI/CD Pipeline with DevSecOps',
+                        ts: sh(script: 'date +%s', returnStdout: true).trim()
+                    ]
+                ]
+            )
+            
+            echo "✅ Code security scanning completed"
         }
-       
+    }
+}
         stage('Build Docker Image') {
             steps {
                 script {
