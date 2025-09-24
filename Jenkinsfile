@@ -38,12 +38,11 @@ pipeline {
         }
         
        stage('Code Security Scanning') {
-            steps {
+    steps {
         script {
-            
             echo "Running code security scans..."
             
-            // NPM Audit for Node.js projects
+            // NPM Audit for Node.js projects (keep this part)
             def npmVulns = "No package.json found"
             sh '''
                 if [ -f "package.json" ]; then
@@ -70,47 +69,41 @@ pipeline {
                 }
             }
             
-            // OWASP Dependency Check
+            // REPLACE OWASP SECTION WITH GRYPE
             sh '''
-    echo "Running OWASP Dependency Check..."
-    
-    # Create local dependency-check directory if not exists
-    if [ ! -d "./dependency-check" ]; then
-        echo "Installing OWASP Dependency Check locally (latest version)..."
-        mkdir -p ./dependency-check
-        cd ./dependency-check
-        
-        # Use latest version instead of 8.4.0
-        wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v12.1.0/dependency-check-12.1.0-release.zip
-        unzip -q dependency-check-12.1.0-release.zip
-        chmod +x dependency-check/bin/dependency-check.sh
-        cd ..
-    fi
-    
-    # Run OWASP Dependency Check with --noupdate flag (no API key needed)
-    ./dependency-check/dependency-check/bin/dependency-check.sh \
-        --project "WebRTC-SignalingServer" \
-        --scan . \
-        --format JSON \
-        --format HTML \
-        --out ./dependency-check-report \
-        --prettyPrint \
-        --noupdate || true  # This flag skips NVD updates and uses cached data
-'''
+                echo "Installing and running Grype vulnerability scanner..."
+                
+                # Install Grype if not available
+                if ! command -v grype &> /dev/null; then
+                    echo "Installing Grype..."
+                    curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b ./grype-bin
+                    export PATH="./grype-bin:$PATH"
+                fi
+                
+                # Scan for vulnerabilities in the current directory
+                echo "Running Grype vulnerability scan..."
+                grype dir:. -o json > grype-report.json 2>/dev/null || true
+                grype dir:. -o table || true
+                
+                echo "✅ Grype vulnerability scan completed"
+            '''
             
-            // Parse OWASP Dependency-Check results
+            // Parse Grype results instead of OWASP results
             def depCheckVulns = "No vulnerabilities found"
-            def depCheckReportPath = 'dependency-check-report/dependency-check-report.json'
-            if (fileExists(depCheckReportPath) && sh(script: "[ -s ${depCheckReportPath} ]", returnStatus: true) == 0) {
-                def depCheckContent = readFile(depCheckReportPath).trim()
-                if (depCheckContent) {
+            if (fileExists('grype-report.json')) {
+                def grypeContent = readFile('grype-report.json').trim()
+                if (grypeContent) {
                     try {
-                        def depCheckJson = readJSON text: depCheckContent
-                        def vulnCount = depCheckJson.dependencies?.sum { it.vulnerabilities?.size() ?: 0 } ?: 0
-                        depCheckVulns = "${vulnCount} vulnerabilities found"
+                        def grypeJson = readJSON text: grypeContent
+                        def vulnCount = grypeJson.matches?.size() ?: 0
+                        def highCriticalCount = grypeJson.matches?.count { match -> 
+                            match.vulnerability?.severity in ['High', 'Critical'] 
+                        } ?: 0
+                        depCheckVulns = "${vulnCount} total vulnerabilities (${highCriticalCount} high/critical)"
                     } catch (Exception e) {
-                        echo "Warning: Failed to parse dependency-check-report.json: ${e.message}. Using fallback count."
-                        depCheckVulns = "Parse error - check report manually"
+                        echo "Warning: Failed to parse grype-report.json: ${e.message}. Using fallback count."
+                        def vulnCount = sh(script: "grep -c '\"severity\"' grype-report.json || echo '0'", returnStdout: true).trim()
+                        depCheckVulns = "${vulnCount} vulnerabilities found"
                     }
                 } else {
                     depCheckVulns = "0 vulnerabilities (empty report)"
@@ -118,10 +111,10 @@ pipeline {
             }
             
             // Archive security reports
-            archiveArtifacts artifacts: 'dependency-check-report/**/*', fingerprint: true, allowEmptyArchive: true
+            archiveArtifacts artifacts: 'grype-report.json', fingerprint: true, allowEmptyArchive: true
             archiveArtifacts artifacts: 'npm-audit-results.json', fingerprint: true, allowEmptyArchive: true
             
-            // Send Slack notification (unchanged)
+            // Send Slack notification (update report links)
             slackSend(
                 botUser: true,
                 tokenCredentialId: 'slack-bot-token',
@@ -136,8 +129,8 @@ pipeline {
                             [title: 'Stage', value: 'Code Security Scanning', short: true],
                             [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
                             [title: 'NPM Audit', value: npmVulns, short: false],
-                            [title: 'OWASP Dependency-Check', value: depCheckVulns, short: false],
-                            [title: 'Reports', value: "• [NPM Audit](${env.BUILD_URL}artifact/npm-audit-results.json)\n• [Dependency-Check](${env.BUILD_URL}artifact/dependency-check-report/dependency-check-report.html)", short: false]
+                            [title: 'Grype Scan', value: depCheckVulns, short: false],
+                            [title: 'Reports', value: "• [NPM Audit](${env.BUILD_URL}artifact/npm-audit-results.json)\n• [Grype Report](${env.BUILD_URL}artifact/grype-report.json)", short: false]
                         ],
                         footer: 'Jenkins CI/CD Pipeline with DevSecOps',
                         ts: sh(script: 'date +%s', returnStdout: true).trim()
@@ -148,6 +141,7 @@ pipeline {
             echo "✅ Code security scanning completed"
         }
     }
+}
 }
         stage('Build Docker Image') {
             steps {
