@@ -10,8 +10,6 @@ pipeline {
             returnStdout: true
         ).trim()
         
-        // Email configuration
-        EMAIL_RECIPIENTS = 'romdhanimohamedali.28@gmail.com'
         
         // DockerHub cleanup configuration
         KEEP_LAST_IMAGES = '10'
@@ -36,7 +34,6 @@ pipeline {
                 echo "Building commit: ${env.GIT_COMMIT_SHORT}"
             }
         }
-        
        stage('Code Security Scanning') {
     steps {
         script {
@@ -141,8 +138,8 @@ pipeline {
             echo "✅ Code security scanning completed"
         }
     }
-}
-}
+  }
+
         stage('Build Docker Image') {
             steps {
                 script {
