@@ -72,28 +72,31 @@ pipeline {
             
             // OWASP Dependency Check
             sh '''
-                echo "Running OWASP Dependency Check..."
-                
-                # Create local dependency-check directory if not exists
-                if [ ! -d "./dependency-check" ]; then
-                    echo "Installing OWASP Dependency Check locally..."
-                    mkdir -p ./dependency-check
-                    cd ./dependency-check
-                    wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.0/dependency-check-8.4.0-release.zip
-                    unzip -q dependency-check-8.4.0-release.zip
-                    chmod +x dependency-check/bin/dependency-check.sh
-                    cd ..
-                fi
-                
-                # Run OWASP Dependency Check
-                ./dependency-check/dependency-check/bin/dependency-check.sh \
-                    --project "WebRTC-SignalingServer" \
-                    --scan . \
-                    --format JSON \
-                    --format HTML \
-                    --out ./dependency-check-report \
-                    --prettyPrint || true
-            '''
+    echo "Running OWASP Dependency Check..."
+    
+    # Create local dependency-check directory if not exists
+    if [ ! -d "./dependency-check" ]; then
+        echo "Installing OWASP Dependency Check locally (latest version)..."
+        mkdir -p ./dependency-check
+        cd ./dependency-check
+        
+        # Use latest version instead of 8.4.0
+        wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v12.1.0/dependency-check-12.1.0-release.zip
+        unzip -q dependency-check-12.1.0-release.zip
+        chmod +x dependency-check/bin/dependency-check.sh
+        cd ..
+    fi
+    
+    # Run OWASP Dependency Check with --noupdate flag (no API key needed)
+    ./dependency-check/dependency-check/bin/dependency-check.sh \
+        --project "WebRTC-SignalingServer" \
+        --scan . \
+        --format JSON \
+        --format HTML \
+        --out ./dependency-check-report \
+        --prettyPrint \
+        --noupdate || true  # This flag skips NVD updates and uses cached data
+'''
             
             // Parse OWASP Dependency-Check results
             def depCheckVulns = "No vulnerabilities found"
