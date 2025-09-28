@@ -305,7 +305,9 @@ pipeline {
             
             withCredentials([sshUserPrivateKey(credentialsId: 'github-argo-ssh-key', keyFileVariable: 'GIT_SSH_KEY')]) {                sh '''
                     cd external-k8s-manifests
-                    
+                    echo "=== Testing SSH authentication to GitHub ==="
+                    git remote -v
+                    $GIT_SSH_COMMAND -T git@github.com
                     # Update image tag in dev environment
                     sed -i "s|newTag:.*|newTag: \\"${BUILD_NUMBER}\\"|g" overlays/dev/kustomization.yaml
                     
