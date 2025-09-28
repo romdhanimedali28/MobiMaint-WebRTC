@@ -12,16 +12,7 @@ app.use(cors({
   methods: ['GET', 'POST'],
   credentials: true
 }));
-module.exports = app;
 
-if (require.main === module) {
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST'],
-  },
-});
 // Hardcoded users with roles (replace with database in production)
 const users = [
   { username: 'user1', password: 'P', role: 'Technician' },
@@ -32,8 +23,7 @@ const users = [
   { username: 'user3', password: 'p3', role: 'Expert' },
 ];
 
-app.use(express.json()); // Parse JSON request bodies
-
+app.use(express.json()); 
 // Login endpoint
 app.post('/login', (req, res) => {
   log("herre login")
@@ -84,6 +74,23 @@ app.post('/api/create-call', (req, res) => {
 
   res.json({ callId });
 });
+
+
+
+module.exports = app;
+
+if (require.main === module) {
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST'],
+  },
+});
+
+
+// Parse JSON request bodies
+
 
 const activeCalls = new Map();
 const userSockets = new Map();
