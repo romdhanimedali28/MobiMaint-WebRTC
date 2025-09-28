@@ -309,12 +309,6 @@ pipeline {
 
                     # Define and export GIT_SSH_COMMAND with verbose output for debugging
                     export GIT_SSH_COMMAND="ssh -i $GIT_SSH_KEY -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -v"
-                    
-                    # Test SSH authentication to GitHub
-                    echo "=== Testing SSH authentication to GitHub ==="
-                    git remote -v
-                    $GIT_SSH_COMMAND -T git@github.com
-
 
                     # Update image tag in dev environment
                     sed -i "s|newTag:.*|newTag: \\"${BUILD_NUMBER}\\"|g" overlays/dev/kustomization.yaml
