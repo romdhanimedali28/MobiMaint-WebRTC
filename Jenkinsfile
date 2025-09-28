@@ -303,8 +303,7 @@ pipeline {
         script {
             echo "Updating Kubernetes manifests with new image tag..."
             
-            withCredentials([sshUserPrivateKey(credentialsId: 'github-ssh-key', keyFileVariable: 'GIT_SSH_KEY')]) {
-                sh '''
+            withCredentials([sshUserPrivateKey(credentialsId: 'github-argo-ssh-key', keyFileVariable: 'GIT_SSH_KEY')]) {                sh '''
                     cd external-k8s-manifests
                     
                     # Update image tag in dev environment
