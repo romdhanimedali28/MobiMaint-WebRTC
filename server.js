@@ -19,7 +19,7 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
   },
 });
-
+module.exports = app;
 // Hardcoded users with roles (replace with database in production)
 const users = [
   { username: 'user1', password: 'P', role: 'Technician' },
