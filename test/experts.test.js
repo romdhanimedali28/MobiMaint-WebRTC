@@ -1,5 +1,5 @@
 const request = require('supertest');
-const app = require('../index.js');
+const app = require('../server.js');
 
 describe('Experts Endpoint', () => {
   it('should return a list of experts', async () => {

@@ -1,5 +1,5 @@
 const request = require('supertest');
-const app = require('../index.js');
+const app = require('../server.js');
 
 describe('Create Call Endpoint', () => {
   it('should create a call for a Technician', async () => {

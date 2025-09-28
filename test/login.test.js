@@ -1,5 +1,5 @@
 const request = require('supertest');
-const app = require('../index.js'); // Adjust path if needed
+const app = require('../server.js'); // Adjust path if needed
 
 describe('Login Endpoint', () => {
   it('should return success for valid credentials', async () => {
