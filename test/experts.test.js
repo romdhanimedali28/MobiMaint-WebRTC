@@ -2,6 +2,15 @@ const request = require('supertest');
 const app = require('../server.js');
 
 describe('Experts Endpoint', () => {
+    let server;
+
+  beforeAll((done) => {
+    server = app.listen(0, done); // Dynamic port
+  });
+
+  afterAll((done) => {
+    server.close(done);
+  });
   it('should return a list of experts', async () => {
     const res = await request(app).get('/api/experts');
     expect(res.statusCode).toBe(200);

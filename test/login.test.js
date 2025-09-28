@@ -2,6 +2,15 @@ const request = require('supertest');
 const app = require('../server.js'); // Adjust path if needed
 
 describe('Login Endpoint', () => {
+    let server;
+
+  beforeAll((done) => {
+    server = app.listen(0, done); // Dynamic port
+  });
+
+  afterAll((done) => {
+    server.close(done);
+  });
   it('should return success for valid credentials', async () => {
     const res = await request(app)
       .post('/login')

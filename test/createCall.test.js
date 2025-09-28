@@ -2,6 +2,15 @@ const request = require('supertest');
 const app = require('../server.js');
 
 describe('Create Call Endpoint', () => {
+    let server;
+
+  beforeAll((done) => {
+    server = app.listen(0, done); // Dynamic port
+  });
+
+  afterAll((done) => {
+    server.close(done);
+  });
   it('should create a call for a Technician', async () => {
     const res = await request(app)
       .post('/api/create-call')
