@@ -60,7 +60,7 @@ pipeline {
                 }
             }
 
-
+      }
        stage('Code Security Scanning') {
             steps {
                script {
