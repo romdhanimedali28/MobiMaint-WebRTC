@@ -35,109 +35,109 @@ pipeline {
             }
         }
        stage('Code Security Scanning') {
-    steps {
-        script {
-            echo "Running code security scans..."
+            steps {
+               script {
+                echo "Running code security scans..."
             
-            // NPM Audit for Node.js projects (keep this part)
-            def npmVulns = "No package.json found"
-            sh '''
-                if [ -f "package.json" ]; then
-                    echo "Running npm audit..."
-                    npm audit --audit-level moderate || true
-                    npm audit --json > npm-audit-results.json || true
-                else
-                    echo "No package.json found, skipping npm audit"
-                fi
-            '''
-            if (fileExists('npm-audit-results.json') && sh(script: '[ -s npm-audit-results.json ]', returnStatus: true) == 0) {
-                def npmContent = readFile('npm-audit-results.json').trim()
-                if (npmContent) {
-                    try {
-                        def npmAuditJson = readJSON text: npmContent
-                        def vulnCount = npmAuditJson.metadata?.vulnerabilities?.total ?: 0
-                        npmVulns = "${vulnCount} vulnerabilities found (moderate or higher)"
-                    } catch (Exception e) {
-                        echo "Warning: Failed to parse npm-audit-results.json: ${e.message}. Using fallback count."
-                        npmVulns = "Parse error - check report manually"
+                        // NPM Audit for Node.js projects (keep this part)
+                        def npmVulns = "No package.json found"
+                        sh '''
+                            if [ -f "package.json" ]; then
+                                echo "Running npm audit..."
+                                npm audit --audit-level moderate || true
+                                npm audit --json > npm-audit-results.json || true
+                            else
+                                echo "No package.json found, skipping npm audit"
+                            fi
+                        '''
+                        if (fileExists('npm-audit-results.json') && sh(script: '[ -s npm-audit-results.json ]', returnStatus: true) == 0) {
+                            def npmContent = readFile('npm-audit-results.json').trim()
+                            if (npmContent) {
+                                try {
+                                    def npmAuditJson = readJSON text: npmContent
+                                    def vulnCount = npmAuditJson.metadata?.vulnerabilities?.total ?: 0
+                                    npmVulns = "${vulnCount} vulnerabilities found (moderate or higher)"
+                                } catch (Exception e) {
+                                    echo "Warning: Failed to parse npm-audit-results.json: ${e.message}. Using fallback count."
+                                    npmVulns = "Parse error - check report manually"
+                                }
+                            } else {
+                                npmVulns = "0 vulnerabilities (empty report)"
+                            }
+                        }
+                        
+                        // REPLACE OWASP SECTION WITH GRYPE
+                        sh '''
+                            echo "Installing and running Grype vulnerability scanner..."
+                            
+                            # Install Grype if not available
+                            if ! command -v grype &> /dev/null; then
+                                echo "Installing Grype..."
+                                curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b ./grype-bin
+                                export PATH="./grype-bin:$PATH"
+                            fi
+                            
+                            # Scan for vulnerabilities in the current directory
+                            echo "Running Grype vulnerability scan..."
+                            grype dir:. -o json > grype-report.json 2>/dev/null || true
+                            grype dir:. -o table || true
+                            
+                            echo "✅ Grype vulnerability scan completed"
+                        '''
+                        
+                        // Parse Grype results instead of OWASP results
+                        def depCheckVulns = "No vulnerabilities found"
+                        if (fileExists('grype-report.json')) {
+                            def grypeContent = readFile('grype-report.json').trim()
+                            if (grypeContent) {
+                                try {
+                                    def grypeJson = readJSON text: grypeContent
+                                    def vulnCount = grypeJson.matches?.size() ?: 0
+                                    def highCriticalCount = grypeJson.matches?.count { match -> 
+                                        match.vulnerability?.severity in ['High', 'Critical'] 
+                                    } ?: 0
+                                    depCheckVulns = "${vulnCount} total vulnerabilities (${highCriticalCount} high/critical)"
+                                } catch (Exception e) {
+                                    echo "Warning: Failed to parse grype-report.json: ${e.message}. Using fallback count."
+                                    def vulnCount = sh(script: "grep -c '\"severity\"' grype-report.json || echo '0'", returnStdout: true).trim()
+                                    depCheckVulns = "${vulnCount} vulnerabilities found"
+                                }
+                            } else {
+                                depCheckVulns = "0 vulnerabilities (empty report)"
+                            }
+                        }
+                        
+                        // Archive security reports
+                        archiveArtifacts artifacts: 'grype-report.json', fingerprint: true, allowEmptyArchive: true
+                        archiveArtifacts artifacts: 'npm-audit-results.json', fingerprint: true, allowEmptyArchive: true
+                        
+                        // Send Slack notification (update report links)
+                        slackSend(
+                            botUser: true,
+                            tokenCredentialId: 'slack-bot-token',
+                            channel: '#jenkins-alerts',
+                            message: "🔍 *Code Security Scan Completed*",
+                            attachments: [
+                                [
+                                    color: (npmVulns.contains('vulnerabilities found') || depCheckVulns.contains('vulnerabilities found')) ? 'warning' : 'good',
+                                    title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - Code Security Scan",
+                                    title_link: "${env.BUILD_URL}",
+                                    fields: [
+                                        [title: 'Stage', value: 'Code Security Scanning', short: true],
+                                        [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
+                                        [title: 'NPM Audit', value: npmVulns, short: false],
+                                        [title: 'Grype Scan', value: depCheckVulns, short: false],
+                                        [title: 'Reports', value: "• [NPM Audit](${env.BUILD_URL}artifact/npm-audit-results.json)\n• [Grype Report](${env.BUILD_URL}artifact/grype-report.json)", short: false]
+                                    ],
+                                    footer: 'Jenkins CI/CD Pipeline with DevSecOps',
+                                    ts: sh(script: 'date +%s', returnStdout: true).trim()
+                                ]
+                            ]
+                        )
+                        
+                        echo "✅ Code security scanning completed"
                     }
-                } else {
-                    npmVulns = "0 vulnerabilities (empty report)"
-                }
-            }
-            
-            // REPLACE OWASP SECTION WITH GRYPE
-            sh '''
-                echo "Installing and running Grype vulnerability scanner..."
-                
-                # Install Grype if not available
-                if ! command -v grype &> /dev/null; then
-                    echo "Installing Grype..."
-                    curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b ./grype-bin
-                    export PATH="./grype-bin:$PATH"
-                fi
-                
-                # Scan for vulnerabilities in the current directory
-                echo "Running Grype vulnerability scan..."
-                grype dir:. -o json > grype-report.json 2>/dev/null || true
-                grype dir:. -o table || true
-                
-                echo "✅ Grype vulnerability scan completed"
-            '''
-            
-            // Parse Grype results instead of OWASP results
-            def depCheckVulns = "No vulnerabilities found"
-            if (fileExists('grype-report.json')) {
-                def grypeContent = readFile('grype-report.json').trim()
-                if (grypeContent) {
-                    try {
-                        def grypeJson = readJSON text: grypeContent
-                        def vulnCount = grypeJson.matches?.size() ?: 0
-                        def highCriticalCount = grypeJson.matches?.count { match -> 
-                            match.vulnerability?.severity in ['High', 'Critical'] 
-                        } ?: 0
-                        depCheckVulns = "${vulnCount} total vulnerabilities (${highCriticalCount} high/critical)"
-                    } catch (Exception e) {
-                        echo "Warning: Failed to parse grype-report.json: ${e.message}. Using fallback count."
-                        def vulnCount = sh(script: "grep -c '\"severity\"' grype-report.json || echo '0'", returnStdout: true).trim()
-                        depCheckVulns = "${vulnCount} vulnerabilities found"
                     }
-                } else {
-                    depCheckVulns = "0 vulnerabilities (empty report)"
-                }
-            }
-            
-            // Archive security reports
-            archiveArtifacts artifacts: 'grype-report.json', fingerprint: true, allowEmptyArchive: true
-            archiveArtifacts artifacts: 'npm-audit-results.json', fingerprint: true, allowEmptyArchive: true
-            
-            // Send Slack notification (update report links)
-            slackSend(
-                botUser: true,
-                tokenCredentialId: 'slack-bot-token',
-                channel: '#jenkins-alerts',
-                message: "🔍 *Code Security Scan Completed*",
-                attachments: [
-                    [
-                        color: (npmVulns.contains('vulnerabilities found') || depCheckVulns.contains('vulnerabilities found')) ? 'warning' : 'good',
-                        title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - Code Security Scan",
-                        title_link: "${env.BUILD_URL}",
-                        fields: [
-                            [title: 'Stage', value: 'Code Security Scanning', short: true],
-                            [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
-                            [title: 'NPM Audit', value: npmVulns, short: false],
-                            [title: 'Grype Scan', value: depCheckVulns, short: false],
-                            [title: 'Reports', value: "• [NPM Audit](${env.BUILD_URL}artifact/npm-audit-results.json)\n• [Grype Report](${env.BUILD_URL}artifact/grype-report.json)", short: false]
-                        ],
-                        footer: 'Jenkins CI/CD Pipeline with DevSecOps',
-                        ts: sh(script: 'date +%s', returnStdout: true).trim()
-                    ]
-                ]
-            )
-            
-            echo "✅ Code security scanning completed"
-        }
-    }
   }
 
         stage('Build Docker Image') {
@@ -298,36 +298,70 @@ pipeline {
                 }
             }
         }
-       
-        stage('Deploy to Kubernetes with Ansible') {
-            steps {
-                script {
-                    echo "Deploying to Kubernetes cluster using Ansible..."
-                    withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
-                        sh '''
-                            ansible-playbook -i external-k8s-manifests/ansible/inventory.ini \
-                                external-k8s-manifests/kubernetes/manifests/k8s-deploy.yml \
-                                -e "KUBECONFIG_CONTENT=$(cat $KUBECONFIG_FILE | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
-                        '''
-                    }
-                }
+        stage('Update GitOps Manifests') {
+    steps {
+        script {
+            echo "Updating Kubernetes manifests with new image tag..."
+            
+            withCredentials([sshUserPrivateKey(credentialsId: 'github-ssh-key', keyFileVariable: 'GIT_SSH_KEY')]) {
+                sh '''
+                    cd external-k8s-manifests
+                    
+                    # Update image tag in dev environment
+                    sed -i "s|newTag:.*|newTag: \\"${BUILD_NUMBER}\\"|g" overlays/dev/kustomization.yaml
+                    
+                    # Commit and push changes
+                    git config user.email "jenkins@pipeline.com"
+                    git config user.name "Jenkins Pipeline"
+                    git add overlays/dev/kustomization.yaml
+                    git commit -m "Update dev image to build ${BUILD_NUMBER} - commit ${GIT_COMMIT_SHORT}"
+                    git push origin main
+                '''
             }
+            
+            echo "✅ GitOps manifests updated successfully"
         }
-       
-        stage('Verifying Deploy to Kubernetes with Ansible') {
-            steps {
-                script {
-                    echo "Verifying deployment to Kubernetes cluster using Ansible..."
-                    withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
-                        sh '''
-                            ansible-playbook -i external-k8s-manifests/ansible/inventory.ini \
-                                external-k8s-manifests/kubernetes/manifests/k8s-verify.yml \
-                                -e "KUBECONFIG_CONTENT=$(cat $KUBECONFIG_FILE | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
-                        '''
-                    }
+    }
+}
+
+stage('Verify ArgoCD Sync') {
+    steps {
+        script {
+            echo "Waiting for ArgoCD to sync deployment..."
+            
+            // Wait for ArgoCD to detect and process changes
+            sleep(60)
+            
+            // Optional: Check ArgoCD application status
+            try {
+                withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG_FILE')]) {
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG_FILE
+                        
+                        # Check if ArgoCD application exists and is syncing
+                        kubectl get application webrtc-dev -n argocd -o jsonpath='{.status.sync.status}' || echo "Application not found"
+                        kubectl get application webrtc-dev -n argocd -o jsonpath='{.status.health.status}' || echo "Health status unknown"
+                    '''
                 }
+            } catch (Exception e) {
+                echo "Warning: Could not check ArgoCD status: ${e.message}"
+                echo "ArgoCD will continue deploying in the background"
             }
+            
+            // Send notification
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',
+                channel: '#jenkins-alerts',
+                message: "🚀 *GitOps Update Complete* - ArgoCD is deploying build ${BUILD_NUMBER}"
+            )
         }
+    }
+}
+       
+     
+
+
     }
    
     post {
@@ -355,8 +389,7 @@ pipeline {
                             [title: 'Branch', value: "${env.BRANCH_NAME ?: 'main'}", short: true],
                             [title: 'Docker Images', value: "• ${DOCKERHUB_REPO}:${BUILD_NUMBER}\n• ${DOCKERHUB_REPO}:latest\n• ${DOCKERHUB_REPO}:${GIT_COMMIT_SHORT}", short: false],
                             [title: 'Security', value: '✅ Code & Docker scans completed', short: false],
-                            [title: 'Deployment', value: '✅ Successfully deployed to Kubernetes cluster', short: false]
-                        ],
+                            [title: 'Deployment', value: '✅ Successfully updated GitOps manifests - ArgoCD will deploy', short: false]                        ],
                         footer: 'Jenkins CI/CD Pipeline with DevSecOps',
                         ts: sh(script: 'date +%s', returnStdout: true).trim()
                     ]
@@ -367,9 +400,7 @@ pipeline {
         failure {
             echo "❌ Pipeline failed!"
             echo "Check the logs above for error details"
-            
-            // Slack notification for failure using slackSend
-            slackSend(
+                        slackSend(
                 botUser: true,
                 tokenCredentialId: 'slack-bot-token',
                 channel: '#jenkins-alerts',
