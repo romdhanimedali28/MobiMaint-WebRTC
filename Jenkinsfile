@@ -288,7 +288,7 @@ pipeline {
             steps {
                 script {
                     echo "Cloning external repo for Kubernetes manifests..."
-                    withCredentials([sshUserPrivateKey(credentialsId: 'github-ssh-key', keyFileVariable: 'GIT_SSH_KEY')]) {
+                    withCredentials([sshUserPrivateKey(credentialsId: 'github-argo-ssh-key', keyFileVariable: 'GIT_SSH_KEY')]) {
                         sh '''
                             rm -rf external-k8s-manifests
                             export GIT_SSH_COMMAND="ssh -i $GIT_SSH_KEY -o StrictHostKeyChecking=no"
