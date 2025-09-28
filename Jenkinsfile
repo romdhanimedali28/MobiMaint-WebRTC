@@ -9,7 +9,8 @@ pipeline {
             script: "git rev-parse --short HEAD",
             returnStdout: true
         ).trim()
-        
+        SONAR_HOST_URL = 'http://localhost:9000'
+        SONAR_TOKEN = credentials('sonarcube-token')
         
         // DockerHub cleanup configuration
         KEEP_LAST_IMAGES = '10'
@@ -34,6 +35,32 @@ pipeline {
                 echo "Building commit: ${env.GIT_COMMIT_SHORT}"
             }
         }
+      stage('SonarQube Analysis') {
+            steps {
+                script {
+                    echo "Running SonarQube analysis..."
+                    withSonarQubeEnv('SonarQube') {
+                        sh """
+                            # Install dependencies for tests/coverage
+                            npm install
+                            # Run tests to generate coverage
+                            npm test -- --coverage
+                            # Run SonarScanner
+                            sonar-scanner \
+                                -Dsonar.projectVersion=${BUILD_NUMBER} \
+                                -Dsonar.gitlab.commit_sha=${GIT_COMMIT_SHORT}
+                        """
+                    }
+                    timeout(time: 10, unit: 'MINUTES') {
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK') {
+                            error "Pipeline aborted due to SonarQube quality gate failure: ${qg.status}"
+                        }
+                    }
+                }
+            }
+
+
        stage('Code Security Scanning') {
             steps {
                script {
