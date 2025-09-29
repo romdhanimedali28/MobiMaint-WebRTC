@@ -11,7 +11,7 @@ pipeline {
         ).trim()
         SONAR_HOST_URL = 'http://localhost:9000'
         SONAR_TOKEN = credentials('sonarcube-token')
-        
+        scannerHome = tool 'SonarQube'
         // DockerHub cleanup configuration
         KEEP_LAST_IMAGES = '10'
     }
@@ -43,13 +43,19 @@ stage('SonarQube Analysis') {
             echo "Running SonarQube analysis..."
             withSonarQubeEnv('SonarQube') {
                 sh """
-                    # Install dependencies for tests/coverage
                     npm install
-                    # Run tests to generate coverage
                     npm run test:coverage || true
-                    # Run SonarScanner
-                    sonar-scanner \
+                    # Run SonarScanner with project-specific parameters
+                    ${scannerHome}/bin/sonar-scanner \
+                        -Dsonar.projectKey=webrtc-pipeline \
+                        -Dsonar.projectName=webrtc-pipeline \
                         -Dsonar.projectVersion=${BUILD_NUMBER} \
+                        -Dsonar.sources=. \
+                        -Dsonar.tests=. \
+                        -Dsonar.language=js \
+                        -Dsonar.sourceEncoding=UTF-8 \
+                        -Dsonar.exclusions=node_modules/**,coverage/** \
+                        -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
                         -Dsonar.gitlab.commit_sha=${GIT_COMMIT_SHORT}
                 """
             }
