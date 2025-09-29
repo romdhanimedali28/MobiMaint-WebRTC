@@ -76,6 +76,12 @@ app.post('/api/create-call', (req, res) => {
 });
 
 
+// Parse JSON request bodies
+
+
+const activeCalls = new Map();
+const userSockets = new Map();
+
 
 module.exports = app;
 
@@ -89,11 +95,7 @@ const io = new Server(server, {
 });
 
 
-// Parse JSON request bodies
 
-
-const activeCalls = new Map();
-const userSockets = new Map();
 
 // Function to broadcast user status change to all clients
 function broadcastUserStatusChange(userId, status) {
