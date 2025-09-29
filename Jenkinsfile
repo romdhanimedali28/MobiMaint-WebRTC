@@ -37,37 +37,37 @@ pipeline {
         }
      
 
-stage('SonarQube Analysis') {
-    steps {
-        script {
-            echo "Running SonarQube analysis..."
-            withSonarQubeEnv('SonarQube') {
-                sh """
-                    npm install
-                    npm run test:coverage || true
-                    # Run SonarScanner with project-specific parameters
-                    ${scannerHome}/bin/sonar-scanner \
-                        -Dsonar.projectKey=webrtc-pipeline \
-                        -Dsonar.projectName=webrtc-pipeline \
-                        -Dsonar.projectVersion=${BUILD_NUMBER} \
-                        -Dsonar.sources=. \
-                        -Dsonar.tests=. \
-                        -Dsonar.language=js \
-                        -Dsonar.sourceEncoding=UTF-8 \
-                        -Dsonar.exclusions=node_modules/**,coverage/** \
-                        -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
-                        -Dsonar.gitlab.commit_sha=${GIT_COMMIT_SHORT}
-                """
-            }
-            timeout(time: 10, unit: 'MINUTES') {
-                def qg = waitForQualityGate()
-                if (qg.status != 'OK') {
-                    error "Pipeline aborted due to SonarQube quality gate failure: ${qg.status}"
+            stage('SonarQube Analysis') {
+                steps {
+                    script {
+                        echo "Running SonarQube analysis..."
+                        withSonarQubeEnv('SonarQube') {
+                            sh """
+                                npm install
+                                npm run test:coverage || true
+                                # Run SonarScanner with project-specific parameters
+                                ${scannerHome}/bin/sonar-scanner \
+                                    -Dsonar.projectKey=webrtc-pipeline \
+                                    -Dsonar.projectName=webrtc-pipeline \
+                                    -Dsonar.projectVersion=${BUILD_NUMBER} \
+                                    -Dsonar.sources=. \
+                                    -Dsonar.tests=. \
+                                    -Dsonar.language=js \
+                                    -Dsonar.sourceEncoding=UTF-8 \
+                                    -Dsonar.exclusions=node_modules/**,coverage/** \
+                                    -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
+                                    -Dsonar.gitlab.commit_sha=${GIT_COMMIT_SHORT}
+                            """
+                        }
+                        timeout(time: 10, unit: 'MINUTES') {
+                            def qg = waitForQualityGate()
+                            if (qg.status != 'OK') {
+                                error "Pipeline aborted due to SonarQube quality gate failure: ${qg.status}"
+                            }
+                        }
+                    }
                 }
             }
-        }
-    }
-}
 
 
 
