@@ -15,9 +15,6 @@ RUN npm ci --only=production && npm cache clean --force
 
 # Copy server code
 COPY server.js ./
-# If you have other files/folders, add them here
-# COPY src/ ./src/
-# COPY public/ ./public/
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \

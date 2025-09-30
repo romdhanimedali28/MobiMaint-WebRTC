@@ -335,9 +335,84 @@ pipeline {
                 }
             }
         }
-        stage('Update GitOps Manifests') {
+        stage('Infrastructure Security Scan') {
     steps {
         script {
+            echo "Scanning Terraform configuration with Checkov..."
+            
+            sh '''
+                cd /home/medaliromdhani/webrtc-k8s-devsecops/terraform
+                checkov -d . --framework terraform --output json > checkov-report.json
+                checkov -d . --framework terraform --output cli || true
+                
+                echo "✅ Checkov scan completed"
+            '''
+            
+            // Parse Checkov results
+            def criticalCount = "0"
+            def highCount = "0"
+            def totalFailed = "0"
+            
+            if (fileExists('external-k8s-manifests/terraform/checkov-report.json')) {
+                try {
+                    criticalCount = sh(
+                        script: "grep -o '\"severity\":\"CRITICAL\"' external-k8s-manifests/terraform/checkov-report.json | wc -l || echo '0'",
+                        returnStdout: true
+                    ).trim()
+                    
+                    highCount = sh(
+                        script: "grep -o '\"severity\":\"HIGH\"' external-k8s-manifests/terraform/checkov-report.json | wc -l || echo '0'",
+                        returnStdout: true
+                    ).trim()
+                    
+                    totalFailed = sh(
+                        script: "grep -o '\"check_result\":{\"result\":\"failed\"' external-k8s-manifests/terraform/checkov-report.json | wc -l || echo '0'",
+                        returnStdout: true
+                    ).trim()
+                } catch (Exception e) {
+                    echo "Warning: Failed to parse Checkov results: ${e.message}"
+                }
+            }
+            
+            // Archive the report
+            archiveArtifacts artifacts: 'external-k8s-manifests/terraform/checkov-report.json', 
+                fingerprint: true, 
+                allowEmptyArchive: true
+            
+            // Send Slack notification
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',
+                channel: '#jenkins-alerts',
+                message: "🔒 *Infrastructure Security Scan Completed*",
+                attachments: [
+                    [
+                        color: (criticalCount.toInteger() > 0) ? 'danger' : ((highCount.toInteger() > 0) ? 'warning' : 'good'),
+                        title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - Terraform Security Scan",
+                        title_link: "${env.BUILD_URL}",
+                        fields: [
+                            [title: 'Stage', value: 'Infrastructure Security Scan', short: true],
+                            [title: 'Tool', value: 'Checkov', short: true],
+                            [title: 'Critical Issues', value: criticalCount, short: true],
+                            [title: 'High Issues', value: highCount, short: true],
+                            [title: 'Total Failed Checks', value: totalFailed, short: true],
+                            [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
+                            [title: 'Report', value: "[View Checkov Report](${env.BUILD_URL}artifact/external-k8s-manifests/terraform/checkov-report.json)", short: false]
+                        ],
+                        footer: 'Jenkins CI/CD Pipeline with DevSecOps',
+                        ts: sh(script: 'date +%s', returnStdout: true).trim()
+                    ]
+                ]
+            )
+            
+            echo "✅ Infrastructure security scanning completed"
+        }
+    }
+}
+
+        stage('Update GitOps Manifests') {
+            steps {
+                script {
             echo "Updating Kubernetes manifests with new image tag..."
             
             withCredentials([sshUserPrivateKey(credentialsId: 'github-ssh-key', keyFileVariable: 'GIT_SSH_KEY')]) {                sh '''
