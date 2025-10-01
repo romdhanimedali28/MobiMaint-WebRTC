@@ -342,8 +342,10 @@ pipeline {
                         
                         sh '''
                             cd external-k8s-manifests/terraform
-                            checkov -d . --framework terraform --output json > checkov-report.json || true
-                            checkov -d . --framework terraform --output cli || true
+                            # Run Checkov scan
+                            /home/jenkins/.local/bin/checkov -d . --framework terraform --output json > checkov-report.json || true
+                            /home/jenkins/.local/bin/checkov -d . --framework terraform --output cli || true
+                
 
                             echo "✅ Checkov scan completed"
                         '''
