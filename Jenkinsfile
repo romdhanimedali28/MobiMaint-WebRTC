@@ -40,9 +40,9 @@ pipeline {
            script {
             echo "🔍 Scanning for exposed secrets..."
             
-            sh '''
+          sh '''
                 # Install Gitleaks if not present
-                if ! command -v gitleaks &> /dev/null; then
+                if ! command -v gitleaks >/dev/null 2>&1; then
                     curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.0/gitleaks_8.18.0_linux_x64.tar.gz | tar -xz
                     chmod +x gitleaks
                 fi
@@ -53,10 +53,19 @@ pipeline {
                     --report-path gitleaks-report.json \
                     --exit-code 0  # Don't fail build, just report
                 
-                # Count findings
-                if [ -f gitleaks-report.json ]; then
-                    SECRETS_FOUND=$(grep -c '"Description"' gitleaks-report.json || echo "0")
-                    echo "Found $SECRETS_FOUND potential secrets"
+                # Count findings safely
+                SECRETS_FOUND=0
+                if [ -f gitleaks-report.json ] && [ -s gitleaks-report.json ]; then
+                    SECRETS_FOUND=$(grep -c '"Description"' gitleaks-report.json || echo 0)
+                    # Ensure single numeric output by removing newlines and non-numeric characters
+                    SECRETS_FOUND=$(echo "$SECRETS_FOUND" | tr -d '\\n' | grep -o '[0-9]*' || echo 0)
+                fi
+                echo "Found $SECRETS_FOUND potential secrets"
+                
+                # Optionally fail the build if secrets are found (adjust based on policy)
+                if [ "$SECRETS_FOUND" -gt 0 ]; then
+                    echo "ERROR: Secrets detected in the codebase. Please remediate before proceeding."
+                    exit 1  # Fail the build if secrets are found
                 fi
             '''
             
@@ -97,8 +106,8 @@ pipeline {
             }
             
             echo "✅ Secret scanning completed"
-        }
-    }
+           }
+                }
 }
 
 
@@ -810,310 +819,310 @@ stage('Verify ArgoCD Sync') {
                 
                 # Create comprehensive endpoint test log
                 cat > endpoint-analysis-log.txt <<LOGHEADER
-╔══════════════════════════════════════════════════════════════╗
-║           WebRTC API Endpoint Analysis Log                  ║
-║           Build: ${BUILD_NUMBER}                                     ║
-║           Date: \$(date)                                      ║
-╚══════════════════════════════════════════════════════════════╝
+                    ╔══════════════════════════════════════════════════════════════╗
+                    ║           WebRTC API Endpoint Analysis Log                  ║
+                    ║           Build: ${BUILD_NUMBER}                                     ║
+                    ║           Date: \$(date)                                      ║
+                    ╚══════════════════════════════════════════════════════════════╝
 
-LOGHEADER
+                    LOGHEADER
 
-                # Create ZAP context
-                cat > zap-webrtc-context.yaml <<'EOF'
-env:
-  contexts:
-    - name: "webrtc-api"
-      urls:
-        - "${BASE_URL}"
-      includePaths:
-        - "${BASE_URL}/.*"
-      excludePaths:
-        - "${BASE_URL}/socket.io/.*"
-      technology:
-        include:
-          - "NodeJS"
-          - "Express"
-          - "Socket.IO"
-EOF
+                                    # Create ZAP context
+                                    cat > zap-webrtc-context.yaml <<'EOF'
+                    env:
+                    contexts:
+                        - name: "webrtc-api"
+                        urls:
+                            - "${BASE_URL}"
+                        includePaths:
+                            - "${BASE_URL}/.*"
+                        excludePaths:
+                            - "${BASE_URL}/socket.io/.*"
+                        technology:
+                            include:
+                            - "NodeJS"
+                            - "Express"
+                            - "Socket.IO"
+                    EOF
 
-                echo "=========================================" | tee -a endpoint-analysis-log.txt
-                echo "STEP 1: Testing Individual Endpoints" | tee -a endpoint-analysis-log.txt
-                echo "=========================================" | tee -a endpoint-analysis-log.txt
-                echo "" | tee -a endpoint-analysis-log.txt
-                
-                # 1. Health Endpoint
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                echo "1️⃣  Testing: GET /health" | tee -a endpoint-analysis-log.txt
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                HEALTH_STATUS=\$(curl -s -o /tmp/health-response.json -w "%{http_code}" ${BASE_URL}/health)
-                echo "   Status Code: \$HEALTH_STATUS" | tee -a endpoint-analysis-log.txt
-                if [ "\$HEALTH_STATUS" = "200" ]; then
-                    echo "   ✅ Endpoint accessible" | tee -a endpoint-analysis-log.txt
-                    echo "   Response: \$(cat /tmp/health-response.json)" | tee -a endpoint-analysis-log.txt
-                else
-                    echo "   ❌ Endpoint returned error" | tee -a endpoint-analysis-log.txt
-                fi
-                echo "" | tee -a endpoint-analysis-log.txt
-                
-                # 2. Login - Invalid Credentials
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                echo "2️⃣  Testing: POST /login (Invalid Credentials)" | tee -a endpoint-analysis-log.txt
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                LOGIN_STATUS=\$(curl -s -X POST ${BASE_URL}/login \
-                  -H "Content-Type: application/json" \
-                  -d '{"username":"testinvalid","password":"wrongpass"}' \
-                  -o /tmp/login-response.json \
-                  -w "%{http_code}")
-                echo "   Status Code: \$LOGIN_STATUS" | tee -a endpoint-analysis-log.txt
-                echo "   Response: \$(cat /tmp/login-response.json)" | tee -a endpoint-analysis-log.txt
-                if [ "\$LOGIN_STATUS" = "401" ]; then
-                    echo "   ✅ Correctly rejected invalid credentials" | tee -a endpoint-analysis-log.txt
-                else
-                    echo "   ⚠️  Unexpected response (expected 401)" | tee -a endpoint-analysis-log.txt
-                fi
-                echo "" | tee -a endpoint-analysis-log.txt
-                
-                # 3. SQL Injection Test
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                echo "3️⃣  Testing: POST /login (SQL Injection)" | tee -a endpoint-analysis-log.txt
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                SQLI_STATUS=\$(curl -s -X POST ${BASE_URL}/login \
-                  -H "Content-Type: application/json" \
-                  -d '{"username":"admin'\'' OR '\''1'\''='\''1","password":"anything"}' \
-                  -o /tmp/sqli-response.json \
-                  -w "%{http_code}")
-                echo "   Status Code: \$SQLI_STATUS" | tee -a endpoint-analysis-log.txt
-                echo "   Response: \$(cat /tmp/sqli-response.json)" | tee -a endpoint-analysis-log.txt
-                if [ "\$SQLI_STATUS" = "401" ] || [ "\$SQLI_STATUS" = "400" ]; then
-                    echo "   ✅ SQL injection attempt rejected" | tee -a endpoint-analysis-log.txt
-                else
-                    echo "   🚨 Possible vulnerability detected" | tee -a endpoint-analysis-log.txt
-                fi
-                echo "" | tee -a endpoint-analysis-log.txt
-                
-                # 4. Experts Endpoint
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                echo "4️⃣  Testing: GET /api/experts (No Auth)" | tee -a endpoint-analysis-log.txt
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                EXPERTS_STATUS=\$(curl -s -o /tmp/experts-response.json -w "%{http_code}" ${BASE_URL}/api/experts)
-                echo "   Status Code: \$EXPERTS_STATUS" | tee -a endpoint-analysis-log.txt
-                if [ "\$EXPERTS_STATUS" = "200" ]; then
-                    echo "   Response: \$(cat /tmp/experts-response.json | head -c 300)..." | tee -a endpoint-analysis-log.txt
-                    echo "   ⚠️  Endpoint accessible without authentication" | tee -a endpoint-analysis-log.txt
-                else
-                    echo "   ✅ Authentication required (Status: \$EXPERTS_STATUS)" | tee -a endpoint-analysis-log.txt
-                fi
-                echo "" | tee -a endpoint-analysis-log.txt
-                
-                # 5. Calls Endpoint
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                echo "5️⃣  Testing: GET /api/calls (No Auth)" | tee -a endpoint-analysis-log.txt
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                CALLS_STATUS=\$(curl -s -o /tmp/calls-response.json -w "%{http_code}" ${BASE_URL}/api/calls)
-                echo "   Status Code: \$CALLS_STATUS" | tee -a endpoint-analysis-log.txt
-                if [ "\$CALLS_STATUS" = "200" ]; then
-                    echo "   Response: \$(cat /tmp/calls-response.json | head -c 300)..." | tee -a endpoint-analysis-log.txt
-                    echo "   ⚠️  Call data accessible without authentication" | tee -a endpoint-analysis-log.txt
-                else
-                    echo "   ✅ Authentication required (Status: \$CALLS_STATUS)" | tee -a endpoint-analysis-log.txt
-                fi
-                echo "" | tee -a endpoint-analysis-log.txt
-                
-                # 6. Users Status
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                echo "6️⃣  Testing: GET /api/users/status (No Auth)" | tee -a endpoint-analysis-log.txt
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                USERS_STATUS=\$(curl -s -o /tmp/users-response.json -w "%{http_code}" ${BASE_URL}/api/users/status)
-                echo "   Status Code: \$USERS_STATUS" | tee -a endpoint-analysis-log.txt
-                if [ "\$USERS_STATUS" = "200" ]; then
-                    echo "   Response: \$(cat /tmp/users-response.json | head -c 300)..." | tee -a endpoint-analysis-log.txt
-                    echo "   ⚠️  User data accessible without authentication" | tee -a endpoint-analysis-log.txt
-                else
-                    echo "   ✅ Authentication required (Status: \$USERS_STATUS)" | tee -a endpoint-analysis-log.txt
-                fi
-                echo "" | tee -a endpoint-analysis-log.txt
-                
-                # 7. Create Call
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                echo "7️⃣  Testing: POST /api/create-call (No Auth)" | tee -a endpoint-analysis-log.txt
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                CREATE_CALL_STATUS=\$(curl -s -X POST ${BASE_URL}/api/create-call \
-                  -H "Content-Type: application/json" \
-                  -d '{"userId":"testuser"}' \
-                  -o /tmp/create-call-response.json \
-                  -w "%{http_code}")
-                echo "   Status Code: \$CREATE_CALL_STATUS" | tee -a endpoint-analysis-log.txt
-                echo "   Response: \$(cat /tmp/create-call-response.json)" | tee -a endpoint-analysis-log.txt
-                if [ "\$CREATE_CALL_STATUS" = "200" ]; then
-                    echo "   🚨 Unauthorized call creation possible" | tee -a endpoint-analysis-log.txt
-                else
-                    echo "   ✅ Authentication/Authorization enforced" | tee -a endpoint-analysis-log.txt
-                fi
-                echo "" | tee -a endpoint-analysis-log.txt
-                
-                # 8. CORS Test
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                echo "8️⃣  Testing: CORS Configuration" | tee -a endpoint-analysis-log.txt
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                CORS_RESPONSE=\$(curl -s -H "Origin: https://malicious-site.com" -I ${BASE_URL}/health)
-                CORS_HEADER=\$(echo "\$CORS_RESPONSE" | grep -i "access-control-allow-origin" || echo "Not found")
-                echo "   CORS Header: \$CORS_HEADER" | tee -a endpoint-analysis-log.txt
-                if echo "\$CORS_HEADER" | grep -q "\\*"; then
-                    echo "   ⚠️  CORS allows all origins" | tee -a endpoint-analysis-log.txt
-                elif [ "\$CORS_HEADER" = "Not found" ]; then
-                    echo "   ✅ CORS not configured (restrictive)" | tee -a endpoint-analysis-log.txt
-                else
-                    echo "   ✅ CORS properly restricted" | tee -a endpoint-analysis-log.txt
-                fi
-                echo "" | tee -a endpoint-analysis-log.txt
-                
-                # 9. Security Headers
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                echo "9️⃣  Testing: Security Headers" | tee -a endpoint-analysis-log.txt
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                
-                HEADERS=\$(curl -s -I ${BASE_URL}/health)
-                
-                HAS_XFRAME=\$(echo "\$HEADERS" | grep -qi "X-Frame-Options" && echo "YES" || echo "NO")
-                HAS_XCONTENT=\$(echo "\$HEADERS" | grep -qi "X-Content-Type-Options" && echo "YES" || echo "NO")
-                HAS_HSTS=\$(echo "\$HEADERS" | grep -qi "Strict-Transport-Security" && echo "YES" || echo "NO")
-                HAS_CSP=\$(echo "\$HEADERS" | grep -qi "Content-Security-Policy" && echo "YES" || echo "NO")
-                
-                echo "   X-Frame-Options:        \$HAS_XFRAME" | tee -a endpoint-analysis-log.txt
-                echo "   X-Content-Type-Options: \$HAS_XCONTENT" | tee -a endpoint-analysis-log.txt
-                echo "   HSTS:                   \$HAS_HSTS" | tee -a endpoint-analysis-log.txt
-                echo "   CSP:                    \$HAS_CSP" | tee -a endpoint-analysis-log.txt
-                echo "" | tee -a endpoint-analysis-log.txt
-                
-                # Count issues
-                MANUAL_ISSUES=0
-                if [ "\$EXPERTS_STATUS" = "200" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
-                if [ "\$CALLS_STATUS" = "200" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
-                if [ "\$USERS_STATUS" = "200" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
-                if [ "\$CREATE_CALL_STATUS" = "200" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
-                if echo "\$CORS_HEADER" | grep -q "\\*"; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
-                if [ "\$HAS_XFRAME" = "NO" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
-                if [ "\$HAS_CSP" = "NO" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
-                
-                echo "=========================================" | tee -a endpoint-analysis-log.txt
-                echo "Manual Testing Results: \$MANUAL_ISSUES issues found" | tee -a endpoint-analysis-log.txt
-                echo "=========================================" | tee -a endpoint-analysis-log.txt
-                echo "" | tee -a endpoint-analysis-log.txt
-                
-                # Run ZAP scan
-                echo "=========================================" | tee -a endpoint-analysis-log.txt
-                echo "STEP 2: Running ZAP Automated Scan" | tee -a endpoint-analysis-log.txt
-                echo "=========================================" | tee -a endpoint-analysis-log.txt
-                echo "" | tee -a endpoint-analysis-log.txt
-                
-                docker run --rm \
-                    -v \$(pwd):/zap/wrk:rw \
-                    --network host \
-                    -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-                    -t ${BASE_URL} \
-                    -n /zap/wrk/zap-webrtc-context.yaml \
-                    -J zap-report.json \
-                    -r zap-report.html \
-                    -w zap-report.md \
-                    -I \
-                    -d 2>&1 | tee zap-scan-output.log || true
-                
-                # Analyze ZAP results
-                if [ -f zap-report.json ]; then
-                    echo "" | tee -a endpoint-analysis-log.txt
-                    echo "=========================================" | tee -a endpoint-analysis-log.txt
-                    echo "STEP 3: ZAP Scan Results" | tee -a endpoint-analysis-log.txt
-                    echo "=========================================" | tee -a endpoint-analysis-log.txt
-                    echo "" | tee -a endpoint-analysis-log.txt
-                    
-                    HIGH_ALERTS=\$(grep -c '"risk":"High"' zap-report.json 2>/dev/null || echo "0")
-                    MEDIUM_ALERTS=\$(grep -c '"risk":"Medium"' zap-report.json 2>/dev/null || echo "0")
-                    LOW_ALERTS=\$(grep -c '"risk":"Low"' zap-report.json 2>/dev/null || echo "0")
-                    INFO_ALERTS=\$(grep -c '"risk":"Informational"' zap-report.json 2>/dev/null || echo "0")
-                    
-                    echo "Vulnerability Count:" | tee -a endpoint-analysis-log.txt
-                    echo "  🔴 High:          \$HIGH_ALERTS" | tee -a endpoint-analysis-log.txt
-                    echo "  🟡 Medium:        \$MEDIUM_ALERTS" | tee -a endpoint-analysis-log.txt
-                    echo "  🔵 Low:           \$LOW_ALERTS" | tee -a endpoint-analysis-log.txt
-                    echo "  ⚪ Informational: \$INFO_ALERTS" | tee -a endpoint-analysis-log.txt
-                    echo "" | tee -a endpoint-analysis-log.txt
-                    
-                    # Extract actual vulnerability names found
-                    echo "Vulnerabilities Detected:" | tee -a endpoint-analysis-log.txt
-                    grep -o '"name":"[^"]*"' zap-report.json | cut -d'"' -f4 | sort -u | while read vuln; do
-                        COUNT=\$(grep -c "\\"name\\":\\"\$vuln\\"" zap-report.json || echo "0")
-                        echo "  • \$vuln (found \$COUNT times)" | tee -a endpoint-analysis-log.txt
-                    done
-                    echo "" | tee -a endpoint-analysis-log.txt
-                    
-                    # Extract high-risk findings details
-                    if [ "\$HIGH_ALERTS" -gt "0" ]; then
-                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                        echo "🔴 HIGH RISK FINDINGS:" | tee -a endpoint-analysis-log.txt
-                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
-                        grep -A 10 '"risk":"High"' zap-report.json | grep -o '"name":"[^"]*"\\|"url":"[^"]*"\\|"description":"[^"]*"' | head -30 | tee -a endpoint-analysis-log.txt
-                        echo "" | tee -a endpoint-analysis-log.txt
-                    fi
-                else
-                    echo "⚠️  ZAP report not generated" | tee -a endpoint-analysis-log.txt
-                fi
-                
-                # Generate final summary
-                cat > dast-final-summary.txt <<SUMMARY
-╔══════════════════════════════════════════════════════════════╗
-║         WebRTC DAST Scan Results - Build ${BUILD_NUMBER}            ║
-╚══════════════════════════════════════════════════════════════╝
+                                    echo "=========================================" | tee -a endpoint-analysis-log.txt
+                                    echo "STEP 1: Testing Individual Endpoints" | tee -a endpoint-analysis-log.txt
+                                    echo "=========================================" | tee -a endpoint-analysis-log.txt
+                                    echo "" | tee -a endpoint-analysis-log.txt
+                                    
+                                    # 1. Health Endpoint
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    echo "1️⃣  Testing: GET /health" | tee -a endpoint-analysis-log.txt
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    HEALTH_STATUS=\$(curl -s -o /tmp/health-response.json -w "%{http_code}" ${BASE_URL}/health)
+                                    echo "   Status Code: \$HEALTH_STATUS" | tee -a endpoint-analysis-log.txt
+                                    if [ "\$HEALTH_STATUS" = "200" ]; then
+                                        echo "   ✅ Endpoint accessible" | tee -a endpoint-analysis-log.txt
+                                        echo "   Response: \$(cat /tmp/health-response.json)" | tee -a endpoint-analysis-log.txt
+                                    else
+                                        echo "   ❌ Endpoint returned error" | tee -a endpoint-analysis-log.txt
+                                    fi
+                                    echo "" | tee -a endpoint-analysis-log.txt
+                                    
+                                    # 2. Login - Invalid Credentials
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    echo "2️⃣  Testing: POST /login (Invalid Credentials)" | tee -a endpoint-analysis-log.txt
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    LOGIN_STATUS=\$(curl -s -X POST ${BASE_URL}/login \
+                                    -H "Content-Type: application/json" \
+                                    -d '{"username":"testinvalid","password":"wrongpass"}' \
+                                    -o /tmp/login-response.json \
+                                    -w "%{http_code}")
+                                    echo "   Status Code: \$LOGIN_STATUS" | tee -a endpoint-analysis-log.txt
+                                    echo "   Response: \$(cat /tmp/login-response.json)" | tee -a endpoint-analysis-log.txt
+                                    if [ "\$LOGIN_STATUS" = "401" ]; then
+                                        echo "   ✅ Correctly rejected invalid credentials" | tee -a endpoint-analysis-log.txt
+                                    else
+                                        echo "   ⚠️  Unexpected response (expected 401)" | tee -a endpoint-analysis-log.txt
+                                    fi
+                                    echo "" | tee -a endpoint-analysis-log.txt
+                                    
+                                    # 3. SQL Injection Test
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    echo "3️⃣  Testing: POST /login (SQL Injection)" | tee -a endpoint-analysis-log.txt
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    SQLI_STATUS=\$(curl -s -X POST ${BASE_URL}/login \
+                                    -H "Content-Type: application/json" \
+                                    -d '{"username":"admin'\'' OR '\''1'\''='\''1","password":"anything"}' \
+                                    -o /tmp/sqli-response.json \
+                                    -w "%{http_code}")
+                                    echo "   Status Code: \$SQLI_STATUS" | tee -a endpoint-analysis-log.txt
+                                    echo "   Response: \$(cat /tmp/sqli-response.json)" | tee -a endpoint-analysis-log.txt
+                                    if [ "\$SQLI_STATUS" = "401" ] || [ "\$SQLI_STATUS" = "400" ]; then
+                                        echo "   ✅ SQL injection attempt rejected" | tee -a endpoint-analysis-log.txt
+                                    else
+                                        echo "   🚨 Possible vulnerability detected" | tee -a endpoint-analysis-log.txt
+                                    fi
+                                    echo "" | tee -a endpoint-analysis-log.txt
+                                    
+                                    # 4. Experts Endpoint
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    echo "4️⃣  Testing: GET /api/experts (No Auth)" | tee -a endpoint-analysis-log.txt
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    EXPERTS_STATUS=\$(curl -s -o /tmp/experts-response.json -w "%{http_code}" ${BASE_URL}/api/experts)
+                                    echo "   Status Code: \$EXPERTS_STATUS" | tee -a endpoint-analysis-log.txt
+                                    if [ "\$EXPERTS_STATUS" = "200" ]; then
+                                        echo "   Response: \$(cat /tmp/experts-response.json | head -c 300)..." | tee -a endpoint-analysis-log.txt
+                                        echo "   ⚠️  Endpoint accessible without authentication" | tee -a endpoint-analysis-log.txt
+                                    else
+                                        echo "   ✅ Authentication required (Status: \$EXPERTS_STATUS)" | tee -a endpoint-analysis-log.txt
+                                    fi
+                                    echo "" | tee -a endpoint-analysis-log.txt
+                                    
+                                    # 5. Calls Endpoint
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    echo "5️⃣  Testing: GET /api/calls (No Auth)" | tee -a endpoint-analysis-log.txt
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    CALLS_STATUS=\$(curl -s -o /tmp/calls-response.json -w "%{http_code}" ${BASE_URL}/api/calls)
+                                    echo "   Status Code: \$CALLS_STATUS" | tee -a endpoint-analysis-log.txt
+                                    if [ "\$CALLS_STATUS" = "200" ]; then
+                                        echo "   Response: \$(cat /tmp/calls-response.json | head -c 300)..." | tee -a endpoint-analysis-log.txt
+                                        echo "   ⚠️  Call data accessible without authentication" | tee -a endpoint-analysis-log.txt
+                                    else
+                                        echo "   ✅ Authentication required (Status: \$CALLS_STATUS)" | tee -a endpoint-analysis-log.txt
+                                    fi
+                                    echo "" | tee -a endpoint-analysis-log.txt
+                                    
+                                    # 6. Users Status
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    echo "6️⃣  Testing: GET /api/users/status (No Auth)" | tee -a endpoint-analysis-log.txt
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    USERS_STATUS=\$(curl -s -o /tmp/users-response.json -w "%{http_code}" ${BASE_URL}/api/users/status)
+                                    echo "   Status Code: \$USERS_STATUS" | tee -a endpoint-analysis-log.txt
+                                    if [ "\$USERS_STATUS" = "200" ]; then
+                                        echo "   Response: \$(cat /tmp/users-response.json | head -c 300)..." | tee -a endpoint-analysis-log.txt
+                                        echo "   ⚠️  User data accessible without authentication" | tee -a endpoint-analysis-log.txt
+                                    else
+                                        echo "   ✅ Authentication required (Status: \$USERS_STATUS)" | tee -a endpoint-analysis-log.txt
+                                    fi
+                                    echo "" | tee -a endpoint-analysis-log.txt
+                                    
+                                    # 7. Create Call
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    echo "7️⃣  Testing: POST /api/create-call (No Auth)" | tee -a endpoint-analysis-log.txt
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    CREATE_CALL_STATUS=\$(curl -s -X POST ${BASE_URL}/api/create-call \
+                                    -H "Content-Type: application/json" \
+                                    -d '{"userId":"testuser"}' \
+                                    -o /tmp/create-call-response.json \
+                                    -w "%{http_code}")
+                                    echo "   Status Code: \$CREATE_CALL_STATUS" | tee -a endpoint-analysis-log.txt
+                                    echo "   Response: \$(cat /tmp/create-call-response.json)" | tee -a endpoint-analysis-log.txt
+                                    if [ "\$CREATE_CALL_STATUS" = "200" ]; then
+                                        echo "   🚨 Unauthorized call creation possible" | tee -a endpoint-analysis-log.txt
+                                    else
+                                        echo "   ✅ Authentication/Authorization enforced" | tee -a endpoint-analysis-log.txt
+                                    fi
+                                    echo "" | tee -a endpoint-analysis-log.txt
+                                    
+                                    # 8. CORS Test
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    echo "8️⃣  Testing: CORS Configuration" | tee -a endpoint-analysis-log.txt
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    CORS_RESPONSE=\$(curl -s -H "Origin: https://malicious-site.com" -I ${BASE_URL}/health)
+                                    CORS_HEADER=\$(echo "\$CORS_RESPONSE" | grep -i "access-control-allow-origin" || echo "Not found")
+                                    echo "   CORS Header: \$CORS_HEADER" | tee -a endpoint-analysis-log.txt
+                                    if echo "\$CORS_HEADER" | grep -q "\\*"; then
+                                        echo "   ⚠️  CORS allows all origins" | tee -a endpoint-analysis-log.txt
+                                    elif [ "\$CORS_HEADER" = "Not found" ]; then
+                                        echo "   ✅ CORS not configured (restrictive)" | tee -a endpoint-analysis-log.txt
+                                    else
+                                        echo "   ✅ CORS properly restricted" | tee -a endpoint-analysis-log.txt
+                                    fi
+                                    echo "" | tee -a endpoint-analysis-log.txt
+                                    
+                                    # 9. Security Headers
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    echo "9️⃣  Testing: Security Headers" | tee -a endpoint-analysis-log.txt
+                                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                    
+                                    HEADERS=\$(curl -s -I ${BASE_URL}/health)
+                                    
+                                    HAS_XFRAME=\$(echo "\$HEADERS" | grep -qi "X-Frame-Options" && echo "YES" || echo "NO")
+                                    HAS_XCONTENT=\$(echo "\$HEADERS" | grep -qi "X-Content-Type-Options" && echo "YES" || echo "NO")
+                                    HAS_HSTS=\$(echo "\$HEADERS" | grep -qi "Strict-Transport-Security" && echo "YES" || echo "NO")
+                                    HAS_CSP=\$(echo "\$HEADERS" | grep -qi "Content-Security-Policy" && echo "YES" || echo "NO")
+                                    
+                                    echo "   X-Frame-Options:        \$HAS_XFRAME" | tee -a endpoint-analysis-log.txt
+                                    echo "   X-Content-Type-Options: \$HAS_XCONTENT" | tee -a endpoint-analysis-log.txt
+                                    echo "   HSTS:                   \$HAS_HSTS" | tee -a endpoint-analysis-log.txt
+                                    echo "   CSP:                    \$HAS_CSP" | tee -a endpoint-analysis-log.txt
+                                    echo "" | tee -a endpoint-analysis-log.txt
+                                    
+                                    # Count issues
+                                    MANUAL_ISSUES=0
+                                    if [ "\$EXPERTS_STATUS" = "200" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                                    if [ "\$CALLS_STATUS" = "200" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                                    if [ "\$USERS_STATUS" = "200" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                                    if [ "\$CREATE_CALL_STATUS" = "200" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                                    if echo "\$CORS_HEADER" | grep -q "\\*"; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                                    if [ "\$HAS_XFRAME" = "NO" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                                    if [ "\$HAS_CSP" = "NO" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                                    
+                                    echo "=========================================" | tee -a endpoint-analysis-log.txt
+                                    echo "Manual Testing Results: \$MANUAL_ISSUES issues found" | tee -a endpoint-analysis-log.txt
+                                    echo "=========================================" | tee -a endpoint-analysis-log.txt
+                                    echo "" | tee -a endpoint-analysis-log.txt
+                                    
+                                    # Run ZAP scan
+                                    echo "=========================================" | tee -a endpoint-analysis-log.txt
+                                    echo "STEP 2: Running ZAP Automated Scan" | tee -a endpoint-analysis-log.txt
+                                    echo "=========================================" | tee -a endpoint-analysis-log.txt
+                                    echo "" | tee -a endpoint-analysis-log.txt
+                                    
+                                    docker run --rm \
+                                        -v \$(pwd):/zap/wrk:rw \
+                                        --network host \
+                                        -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+                                        -t ${BASE_URL} \
+                                        -n /zap/wrk/zap-webrtc-context.yaml \
+                                        -J zap-report.json \
+                                        -r zap-report.html \
+                                        -w zap-report.md \
+                                        -I \
+                                        -d 2>&1 | tee zap-scan-output.log || true
+                                    
+                                    # Analyze ZAP results
+                                    if [ -f zap-report.json ]; then
+                                        echo "" | tee -a endpoint-analysis-log.txt
+                                        echo "=========================================" | tee -a endpoint-analysis-log.txt
+                                        echo "STEP 3: ZAP Scan Results" | tee -a endpoint-analysis-log.txt
+                                        echo "=========================================" | tee -a endpoint-analysis-log.txt
+                                        echo "" | tee -a endpoint-analysis-log.txt
+                                        
+                                        HIGH_ALERTS=\$(grep -c '"risk":"High"' zap-report.json 2>/dev/null || echo "0")
+                                        MEDIUM_ALERTS=\$(grep -c '"risk":"Medium"' zap-report.json 2>/dev/null || echo "0")
+                                        LOW_ALERTS=\$(grep -c '"risk":"Low"' zap-report.json 2>/dev/null || echo "0")
+                                        INFO_ALERTS=\$(grep -c '"risk":"Informational"' zap-report.json 2>/dev/null || echo "0")
+                                        
+                                        echo "Vulnerability Count:" | tee -a endpoint-analysis-log.txt
+                                        echo "  🔴 High:          \$HIGH_ALERTS" | tee -a endpoint-analysis-log.txt
+                                        echo "  🟡 Medium:        \$MEDIUM_ALERTS" | tee -a endpoint-analysis-log.txt
+                                        echo "  🔵 Low:           \$LOW_ALERTS" | tee -a endpoint-analysis-log.txt
+                                        echo "  ⚪ Informational: \$INFO_ALERTS" | tee -a endpoint-analysis-log.txt
+                                        echo "" | tee -a endpoint-analysis-log.txt
+                                        
+                                        # Extract actual vulnerability names found
+                                        echo "Vulnerabilities Detected:" | tee -a endpoint-analysis-log.txt
+                                        grep -o '"name":"[^"]*"' zap-report.json | cut -d'"' -f4 | sort -u | while read vuln; do
+                                            COUNT=\$(grep -c "\\"name\\":\\"\$vuln\\"" zap-report.json || echo "0")
+                                            echo "  • \$vuln (found \$COUNT times)" | tee -a endpoint-analysis-log.txt
+                                        done
+                                        echo "" | tee -a endpoint-analysis-log.txt
+                                        
+                                        # Extract high-risk findings details
+                                        if [ "\$HIGH_ALERTS" -gt "0" ]; then
+                                            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                            echo "🔴 HIGH RISK FINDINGS:" | tee -a endpoint-analysis-log.txt
+                                            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                                            grep -A 10 '"risk":"High"' zap-report.json | grep -o '"name":"[^"]*"\\|"url":"[^"]*"\\|"description":"[^"]*"' | head -30 | tee -a endpoint-analysis-log.txt
+                                            echo "" | tee -a endpoint-analysis-log.txt
+                                        fi
+                                    else
+                                        echo "⚠️  ZAP report not generated" | tee -a endpoint-analysis-log.txt
+                                    fi
+                                    
+                                    # Generate final summary
+                                    cat > dast-final-summary.txt <<SUMMARY
+                    ╔══════════════════════════════════════════════════════════════╗
+                    ║         WebRTC DAST Scan Results - Build ${BUILD_NUMBER}            ║
+                    ╚══════════════════════════════════════════════════════════════╝
 
-🎯 Target: ${BASE_URL}
-📅 Date: \$(date '+%Y-%m-%d %H:%M:%S')
-🔗 Commit: ${GIT_COMMIT_SHORT}
+                    🎯 Target: ${BASE_URL}
+                    📅 Date: \$(date '+%Y-%m-%d %H:%M:%S')
+                    🔗 Commit: ${GIT_COMMIT_SHORT}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 SCAN RESULTS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    📊 SCAN RESULTS
+                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Manual Endpoint Testing:
-  Issues Found: \$MANUAL_ISSUES
+                    Manual Endpoint Testing:
+                    Issues Found: \$MANUAL_ISSUES
 
-ZAP Automated Scan:
-  🔴 High Risk:     \${HIGH_ALERTS:-0}
-  🟡 Medium Risk:   \${MEDIUM_ALERTS:-0}
-  🔵 Low Risk:      \${LOW_ALERTS:-0}
-  ⚪ Info:          \${INFO_ALERTS:-0}
+                    ZAP Automated Scan:
+                    🔴 High Risk:     \${HIGH_ALERTS:-0}
+                    🟡 Medium Risk:   \${MEDIUM_ALERTS:-0}
+                    🔵 Low Risk:      \${LOW_ALERTS:-0}
+                    ⚪ Info:          \${INFO_ALERTS:-0}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔍 ENDPOINT TEST RESULTS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    🔍 ENDPOINT TEST RESULTS
+                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-GET  /health              → \$HEALTH_STATUS
-POST /login               → \$LOGIN_STATUS
-GET  /api/experts         → \$EXPERTS_STATUS
-GET  /api/calls           → \$CALLS_STATUS
-GET  /api/users/status    → \$USERS_STATUS
-POST /api/create-call     → \$CREATE_CALL_STATUS
+                    GET  /health              → \$HEALTH_STATUS
+                    POST /login               → \$LOGIN_STATUS
+                    GET  /api/experts         → \$EXPERTS_STATUS
+                    GET  /api/calls           → \$CALLS_STATUS
+                    GET  /api/users/status    → \$USERS_STATUS
+                    POST /api/create-call     → \$CREATE_CALL_STATUS
 
-CORS Configuration:       \$(echo "\$CORS_HEADER" | grep -q "\\*" && echo "⚠️  Allows all origins" || echo "✅ Restricted")
+                    CORS Configuration:       \$(echo "\$CORS_HEADER" | grep -q "\\*" && echo "⚠️  Allows all origins" || echo "✅ Restricted")
 
-Security Headers:
-  X-Frame-Options:        \$HAS_XFRAME
-  X-Content-Type-Options: \$HAS_XCONTENT
-  HSTS:                   \$HAS_HSTS
-  CSP:                    \$HAS_CSP
+                    Security Headers:
+                    X-Frame-Options:        \$HAS_XFRAME
+                    X-Content-Type-Options: \$HAS_XCONTENT
+                    HSTS:                   \$HAS_HSTS
+                    CSP:                    \$HAS_CSP
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📎 DETAILED REPORTS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    📎 DETAILED REPORTS
+                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📄 Endpoint Analysis:  endpoint-analysis-log.txt
-🔍 ZAP Scan Log:       zap-scan-output.log
-📊 ZAP HTML Report:    zap-report.html
-📋 ZAP JSON Report:    zap-report.json
+                    📄 Endpoint Analysis:  endpoint-analysis-log.txt
+                    🔍 ZAP Scan Log:       zap-scan-output.log
+                    📊 ZAP HTML Report:    zap-report.html
+                    📋 ZAP JSON Report:    zap-report.json
 
-Jenkins Build: ${env.BUILD_URL}
-SUMMARY
+                    Jenkins Build: ${env.BUILD_URL}
+                    SUMMARY
 
-                cat dast-final-summary.txt
-            """
+                                    cat dast-final-summary.txt
+                                """
             
             // Parse results for Slack
             def healthStatus = sh(script: "grep 'GET /health' dast-final-summary.txt | awk '{print \$NF}'", returnStdout: true).trim()
