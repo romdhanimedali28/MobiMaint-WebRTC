@@ -40,34 +40,32 @@ pipeline {
     steps {
         script {
             echo "🔍 Scanning for exposed secrets..."
-            
-            // Run Gitleaks and count secrets
-            def secretsOutput = sh(
+
+            def secretsFound = sh(
                 script: '''
-                    # Check if jq is installed, attempt installation if not
+                    # Ensure jq is installed
                     if ! command -v jq >/dev/null 2>&1; then
                         if command -v apk >/dev/null 2>&1; then
                             apk add --no-cache jq
                         elif command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
                             apt-get update && apt-get install -y jq
                         else
-                            echo "WARNING: jq not installed and cannot be installed (no apk or root apt-get). Falling back to grep."
+                            echo "WARNING: jq not installed and cannot be installed."
                         fi
                     fi
-                    
+
                     # Install Gitleaks if not present
                     if ! command -v gitleaks >/dev/null 2>&1; then
                         curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.0/gitleaks_8.18.0_linux_x64.tar.gz | tar -xz
                         chmod +x gitleaks
                     fi
-                    
-                    # Run secret scan
+
+                    # Run Gitleaks
                     ./gitleaks detect --source . \
                         --report-format json \
                         --report-path gitleaks-report.json \
                         --exit-code 0
-                    
-                    # Initialize SECRETS_FOUND
+
                     SECRETS_FOUND=0
                     if [ -f gitleaks-report.json ] && [ -s gitleaks-report.json ]; then
                         if command -v jq >/dev/null 2>&1; then
@@ -75,44 +73,34 @@ pipeline {
                         else
                             SECRETS_FOUND=$(grep -c '"Description"' gitleaks-report.json 2>/dev/null || echo "0")
                         fi
-                        SECRETS_FOUND=$(echo "$SECRETS_FOUND" | grep -oE '^[0-9]+$' || echo "0")
                     fi
-                    
-                    # Output ONLY the number for Groovy parsing
-                    echo "SECRETS_COUNT=$SECRETS_FOUND"
-                ''',
-                returnStdout: true
-            ).trim()
 
-            // Extract just the number from the output
-            def secretsFound = 0
-            def countMatch = secretsOutput =~ /SECRETS_COUNT=(\d+)/
-            if (countMatch) {
-                secretsFound = countMatch[0][1].toInteger()
-            }
-            
-            echo "Found ${secretsFound} potential secrets"
-            
-            // Rename report for uniqueness
-            sh """
-                if [ -f gitleaks-report.json ]; then
-                    mv gitleaks-report.json gitleaks-report-${env.BUILD_NUMBER}.json
-                fi
-            """
-            
-            // Display results
-            if (secretsFound > 0) {
-                echo "ERROR: ${secretsFound} secrets detected. Review gitleaks-report-${env.BUILD_NUMBER}.json for details."
-                sh "cat gitleaks-report-${env.BUILD_NUMBER}.json || true"
-            } else {
-                echo "No secrets found. Report archived for review."
-            }
-            
+                    echo "Found $SECRETS_FOUND potential secrets"
+                    if [ "$SECRETS_FOUND" -gt 0 ]; then
+                        echo "ERROR: $SECRETS_FOUND secrets detected. Review report."
+                    else
+                        echo "✅ No secrets found."
+                    fi
+
+                    # Rename report for uniqueness
+                    if [ -f gitleaks-report.json ]; then
+                        mv gitleaks-report.json gitleaks-report-$BUILD_NUMBER.json
+                    fi
+
+                    # Final clean output for Groovy (numeric only)
+                    echo "$SECRETS_FOUND" > /tmp/secrets_count.txt
+                ''',
+                returnStatus: false
+            )
+
+            // Read the numeric value safely
+            def secretsCount = readFile("/tmp/secrets_count.txt").trim().toInteger()
+
             // Archive report
-            archiveArtifacts artifacts: "gitleaks-report-${env.BUILD_NUMBER}.json", 
-                fingerprint: true, 
+            archiveArtifacts artifacts: "gitleaks-report-${env.BUILD_NUMBER}.json",
+                fingerprint: true,
                 allowEmptyArchive: true
-            
+
             // Send Slack notification
             slackSend(
                 botUser: true,
@@ -120,25 +108,26 @@ pipeline {
                 channel: '#jenkins-alerts',
                 message: "🔐 *Secret Scanning Completed*",
                 attachments: [[
-                    color: (secretsFound > 0) ? 'danger' : 'good',
+                    color: (secretsCount > 0) ? 'danger' : 'good',
                     title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
                     fields: [
-                        [title: 'Secrets Found', value: secretsFound.toString(), short: true],
-                        [title: 'Status', value: secretsFound > 0 ? '⚠️ ACTION REQUIRED' : '✅ No secrets detected', short: true],
+                        [title: 'Secrets Found', value: secretsCount.toString(), short: true],
+                        [title: 'Status', value: secretsCount > 0 ? '⚠️ ACTION REQUIRED' : '✅ No secrets detected', short: true],
                         [title: 'Report', value: "[View Report](${env.BUILD_URL}artifact/gitleaks-report-${env.BUILD_NUMBER}.json)", short: false]
                     ]
                 ]]
             )
-            
-            // Fail build if secrets found (STRICT MODE)
-            if (secretsFound > 0) {
-                error "❌ ${secretsFound} secrets detected! Remove them before proceeding."
+
+            // Fail build if secrets found
+            if (secretsCount > 0) {
+                error "❌ Secrets detected! Remove them before proceeding."
             }
-            
-            echo "✅ Secret scanning completed"
+
+            echo "✅ Secret scanning completed successfully with $secretsCount leaks."
         }
     }
 }
+
 
 
             stage('SonarQube Analysis') {
