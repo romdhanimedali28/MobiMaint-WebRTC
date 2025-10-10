@@ -35,7 +35,72 @@ pipeline {
                 echo "Building commit: ${env.GIT_COMMIT_SHORT}"
             }
         }
-     
+        stage('Secret Scanning') {
+            steps {
+           script {
+            echo "🔍 Scanning for exposed secrets..."
+            
+            sh '''
+                # Install Gitleaks if not present
+                if ! command -v gitleaks &> /dev/null; then
+                    curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.0/gitleaks_8.18.0_linux_x64.tar.gz | tar -xz
+                    chmod +x gitleaks
+                fi
+                
+                # Run secret scan
+                ./gitleaks detect --source . \
+                    --report-format json \
+                    --report-path gitleaks-report.json \
+                    --exit-code 0  # Don't fail build, just report
+                
+                # Count findings
+                if [ -f gitleaks-report.json ]; then
+                    SECRETS_FOUND=$(grep -c '"Description"' gitleaks-report.json || echo "0")
+                    echo "Found $SECRETS_FOUND potential secrets"
+                fi
+            '''
+            
+            // Parse results
+            def secretsFound = "0"
+            if (fileExists('gitleaks-report.json')) {
+                secretsFound = sh(
+                    script: "grep -c '\"Description\"' gitleaks-report.json || echo '0'",
+                    returnStdout: true
+                ).trim()
+            }
+            
+            // Archive report
+            archiveArtifacts artifacts: 'gitleaks-report.json', 
+                fingerprint: true, 
+                allowEmptyArchive: true
+            
+            // Send notification
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',
+                channel: '#jenkins-alerts',
+                message: "🔐 *Secret Scanning Completed*",
+                attachments: [[
+                    color: (secretsFound.toInteger() > 0) ? 'danger' : 'good',
+                    title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                    fields: [
+                        [title: 'Secrets Found', value: secretsFound, short: true],
+                        [title: 'Status', value: secretsFound.toInteger() > 0 ? '⚠️ ACTION REQUIRED' : '✅ No secrets detected', short: true],
+                        [title: 'Report', value: "[View Report](${env.BUILD_URL}artifact/gitleaks-report.json)", short: false]
+                    ]
+                ]]
+            )
+            
+            // Fail build if secrets found (STRICT MODE)
+            if (secretsFound.toInteger() > 0) {
+                error "❌ Secrets detected! Remove them before proceeding."
+            }
+            
+            echo "✅ Secret scanning completed"
+        }
+    }
+}
+
 
             stage('SonarQube Analysis') {
                 steps {
@@ -270,6 +335,64 @@ pipeline {
             }
         }
        
+
+
+           stage('SBOM Generation') {
+              steps {
+               script {
+            echo "📦 Generating Software Bill of Materials..."
+            
+            sh '''
+                # Install Syft if not present
+                if ! command -v syft &> /dev/null; then
+                    curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ./syft-bin
+                    export PATH="./syft-bin:$PATH"
+                fi
+                
+                # Generate SBOM in multiple formats
+                syft ${DOCKERHUB_REPO}:${BUILD_NUMBER} -o spdx-json > sbom-spdx.json
+                syft ${DOCKERHUB_REPO}:${BUILD_NUMBER} -o cyclonedx-json > sbom-cyclonedx.json
+                syft ${DOCKERHUB_REPO}:${BUILD_NUMBER} -o table > sbom-readable.txt
+                
+                # Count components
+                COMPONENT_COUNT=$(grep -c '"name"' sbom-spdx.json || echo "0")
+                echo "Total components: $COMPONENT_COUNT"
+            '''
+            
+            // Parse component count
+            def componentCount = sh(
+                script: "grep -c '\"name\"' sbom-spdx.json || echo '0'",
+                returnStdout: true
+            ).trim()
+            
+            // Archive SBOM
+            archiveArtifacts artifacts: 'sbom-*.json,sbom-readable.txt', 
+                fingerprint: true
+            
+            // Notification
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',
+                channel: '#jenkins-alerts',
+                message: "📦 *SBOM Generated Successfully*",
+                attachments: [[
+                    color: 'good',
+                    title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                    fields: [
+                        [title: 'Total Components', value: componentCount, short: true],
+                        [title: 'Image', value: "${DOCKERHUB_REPO}:${BUILD_NUMBER}", short: true],
+                        [title: 'SBOM Formats', value: 'SPDX, CycloneDX, Human-readable', short: false],
+                        [title: 'Downloads', value: "[SPDX](${env.BUILD_URL}artifact/sbom-spdx.json) | [CycloneDX](${env.BUILD_URL}artifact/sbom-cyclonedx.json)", short: false]
+                    ]
+                ]]
+            )
+            
+            echo "✅ SBOM generation completed - ${componentCount} components catalogued"
+        }
+    }
+}
+
+
         stage('Test Docker Image') {
             steps {
                 script {
@@ -412,6 +535,196 @@ pipeline {
                 }
     }
 
+     stage('K8s Manifest Security') {
+            steps {
+                script {
+                      echo "☸️ Scanning Kubernetes manifests for security issues..."
+            
+                     sh '''
+                                cd external-k8s-manifests
+                                
+                                # Kubesec scan (scores 0-10, higher is better)
+                                echo "Running Kubesec analysis..."
+                                docker run --rm -v $(pwd):/project kubesec/kubesec scan /project/overlays/dev/*.yaml \
+                                    > kubesec-report.json || true
+                                
+                                # Calculate average security score
+                                if command -v jq &> /dev/null; then
+                                    AVG_SCORE=$(jq '[.[].score] | add / length' kubesec-report.json || echo "0")
+                                    echo "Average Kubesec score: $AVG_SCORE/10"
+                                fi
+                                
+                                # Datree policy check
+                                echo "Running Datree policy validation..."
+                                if ! command -v datree &> /dev/null; then
+                                    curl https://get.datree.io | /bin/bash
+                                fi
+                                
+                                datree test overlays/dev/*.yaml \
+                                    --output json > datree-report.json || true
+                                
+                                # Count failed rules
+                                FAILED_RULES=$(grep -c '"status":"failed"' datree-report.json || echo "0")
+                                echo "Datree: $FAILED_RULES policy violations found"
+                                
+                                # Generate summary
+                                cat > k8s-security-summary.txt <<EOF
+                === Kubernetes Security Scan Summary ===
+                Kubesec Average Score: $AVG_SCORE/10
+                Datree Policy Violations: $FAILED_RULES
+
+                Common Issues to Check:
+                - Containers running as root
+                - Missing resource limits
+                - Privileged containers
+                - Exposed secrets in env vars
+                - Missing security contexts
+                EOF
+                            '''
+            
+            // Parse results
+            def failedRules = sh(
+                script: "grep -c '\"status\":\"failed\"' external-k8s-manifests/datree-report.json || echo '0'",
+                returnStdout: true
+            ).trim()
+            
+            // Archive reports
+            archiveArtifacts artifacts: 'external-k8s-manifests/kubesec-report.json,external-k8s-manifests/datree-report.json,external-k8s-manifests/k8s-security-summary.txt', 
+                fingerprint: true,
+                allowEmptyArchive: true
+            
+            // Notification
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',
+                channel: '#jenkins-alerts',
+                message: "☸️ *Kubernetes Manifest Security Scan*",
+                attachments: [[
+                    color: (failedRules.toInteger() > 5) ? 'danger' : ((failedRules.toInteger() > 0) ? 'warning' : 'good'),
+                    title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                    fields: [
+                        [title: 'Policy Violations', value: failedRules, short: true],
+                        [title: 'Tool', value: 'Kubesec + Datree', short: true],
+                        [title: 'Status', value: failedRules.toInteger() == 0 ? '✅ Passed' : '⚠️ Review Required', short: false],
+                        [title: 'Reports', value: "[Kubesec](${env.BUILD_URL}artifact/kubesec-report.json) | [Datree](${env.BUILD_URL}artifact/datree-report.json)", short: false]
+                    ]
+                ]]
+            )
+            
+            // Optional: Fail on critical issues
+            if (failedRules.toInteger() > 10) {
+                error "❌ Too many K8s security violations (${failedRules}). Fix critical issues."
+            }
+            
+            echo "✅ Kubernetes manifest security scan completed"
+        }
+    }
+}
+
+
+stage('Policy Validation') {
+    steps {
+        script {
+            echo "📋 Validating security and compliance policies..."
+            
+            sh '''
+                # Install OPA if not present
+                if ! command -v opa &> /dev/null; then
+                    echo "Installing Open Policy Agent..."
+                    curl -L -o opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64
+                    chmod +x opa
+                    sudo mv opa /usr/local/bin/
+                fi
+                
+                # Create policy directory structure if not exists
+                mkdir -p policies/kubernetes
+                mkdir -p policies/docker
+                mkdir -p policies/terraform
+                
+                # Run policy tests
+                echo "Testing policies..."
+                opa test policies/ --verbose --bundle > opa-test-results.txt || true
+                
+                # Validate K8s manifests against policies
+                echo "Validating Kubernetes manifests..."
+                cd external-k8s-manifests
+                
+                for manifest in overlays/dev/*.yaml; do
+                    echo "Checking $manifest..."
+                    opa eval --data ../policies/kubernetes \
+                        --input "$manifest" \
+                        --format pretty \
+                        'data.kubernetes.admission.deny' \
+                        >> ../opa-k8s-validation.json || true
+                done
+                
+                cd ..
+                
+                # Count policy violations
+                VIOLATIONS=$(grep -c "deny" opa-k8s-validation.json || echo "0")
+                echo "Policy violations found: $VIOLATIONS"
+                
+                # Generate summary report
+                                                cat > policy-summary.txt <<EOF
+                                === Policy Validation Summary ===
+                                Date: $(date)
+                                Build: ${BUILD_NUMBER}
+
+                                Policies Tested: $(find policies/ -name "*.rego" | wc -l)
+                                Manifests Validated: $(find external-k8s-manifests/overlays/dev -name "*.yaml" | wc -l)
+                                Violations Found: $VIOLATIONS
+
+                                Policy Categories:
+                                - Security contexts
+                                - Resource limits
+                                - Image registries
+                                - Network policies
+                                - Label requirements
+                                - Compliance rules
+                                EOF
+                
+                cat policy-summary.txt
+            '''
+            
+            // Parse results
+            def violations = sh(
+                script: "grep -c 'deny' opa-k8s-validation.json || echo '0'",
+                returnStdout: true
+            ).trim()
+            
+            // Archive reports
+            archiveArtifacts artifacts: 'opa-test-results.txt,opa-k8s-validation.json,policy-summary.txt', 
+                fingerprint: true,
+                allowEmptyArchive: true
+            
+            // Notification
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',
+                channel: '#jenkins-alerts',
+                message: "📋 *Policy Validation Completed*",
+                attachments: [[
+                    color: (violations.toInteger() > 0) ? 'danger' : 'good',
+                    title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                    fields: [
+                        [title: 'Policy Violations', value: violations, short: true],
+                        [title: 'Status', value: violations.toInteger() == 0 ? '✅ Compliant' : '❌ Non-compliant', short: true],
+                        [title: 'Policies Enforced', value: '• Security contexts\n• Resource limits\n• Image registries\n• Network policies', short: false],
+                        [title: 'Report', value: "[View Details](${env.BUILD_URL}artifact/policy-summary.txt)", short: false]
+                    ]
+                ]]
+            )
+            
+            // Fail build on violations
+            if (violations.toInteger() > 0) {
+                error "❌ Policy validation failed with ${violations} violations. Fix before deployment!"
+            }
+            
+            echo "✅ All policies passed"
+        }
+    }
+}
+
         stage('Update GitOps Manifests') {
             steps {
                 script {
@@ -476,7 +789,435 @@ stage('Verify ArgoCD Sync') {
     }
 }
        
-     
+   stage('DAST Scan') {
+    steps {
+        script {
+            echo "🎯 Running Comprehensive DAST on WebRTC Signaling Server..."
+            
+            def BASE_URL = "http://webrtc-medali.japaneast.cloudapp.azure.com"
+            
+            sh """
+                # Wait for deployment to stabilize
+                echo "Waiting for deployment..."
+                sleep 45
+                
+                # Test API health
+                echo "Testing API health endpoint..."
+                curl -f ${BASE_URL}/health || {
+                    echo "❌ Health check failed! API may not be ready."
+                    exit 0  # Don't fail build, just skip DAST
+                }
+                
+                # Create comprehensive endpoint test log
+                cat > endpoint-analysis-log.txt <<'LOGHEADER'
+╔══════════════════════════════════════════════════════════════╗
+║           WebRTC API Endpoint Analysis Log                  ║
+║           Build: ${BUILD_NUMBER}                                     ║
+║           Date: $(date)                                      ║
+╚══════════════════════════════════════════════════════════════╝
+
+LOGHEADER
+
+                # Create ZAP context
+                cat > zap-webrtc-context.yaml <<'EOF'
+env:
+  contexts:
+    - name: "webrtc-api"
+      urls:
+        - "${BASE_URL}"
+      includePaths:
+        - "${BASE_URL}/.*"
+      excludePaths:
+        - "${BASE_URL}/socket.io/.*"
+      technology:
+        include:
+          - "NodeJS"
+          - "Express"
+          - "Socket.IO"
+EOF
+
+                echo "=========================================" | tee -a endpoint-analysis-log.txt
+                echo "STEP 1: Testing Individual Endpoints" | tee -a endpoint-analysis-log.txt
+                echo "=========================================" | tee -a endpoint-analysis-log.txt
+                echo "" | tee -a endpoint-analysis-log.txt
+                
+                # 1. Health Endpoint
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                echo "1️⃣  Testing: GET /health" | tee -a endpoint-analysis-log.txt
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                HEALTH_STATUS=\$(curl -s -o /tmp/health-response.json -w "%{http_code}" ${BASE_URL}/health)
+                echo "   Status Code: \$HEALTH_STATUS" | tee -a endpoint-analysis-log.txt
+                if [ "\$HEALTH_STATUS" = "200" ]; then
+                    echo "   ✅ Endpoint accessible" | tee -a endpoint-analysis-log.txt
+                    echo "   Response: \$(cat /tmp/health-response.json)" | tee -a endpoint-analysis-log.txt
+                else
+                    echo "   ❌ Endpoint returned error" | tee -a endpoint-analysis-log.txt
+                fi
+                echo "" | tee -a endpoint-analysis-log.txt
+                
+                # 2. Login - Invalid Credentials
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                echo "2️⃣  Testing: POST /login (Invalid Credentials)" | tee -a endpoint-analysis-log.txt
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                LOGIN_STATUS=\$(curl -s -X POST ${BASE_URL}/login \
+                  -H "Content-Type: application/json" \
+                  -d '{"username":"testinvalid","password":"wrongpass"}' \
+                  -o /tmp/login-response.json \
+                  -w "%{http_code}")
+                echo "   Status Code: \$LOGIN_STATUS" | tee -a endpoint-analysis-log.txt
+                echo "   Response: \$(cat /tmp/login-response.json)" | tee -a endpoint-analysis-log.txt
+                if [ "\$LOGIN_STATUS" = "401" ]; then
+                    echo "   ✅ Correctly rejected invalid credentials" | tee -a endpoint-analysis-log.txt
+                else
+                    echo "   ⚠️  Unexpected response (expected 401)" | tee -a endpoint-analysis-log.txt
+                fi
+                echo "" | tee -a endpoint-analysis-log.txt
+                
+                # 3. SQL Injection Test
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                echo "3️⃣  Testing: POST /login (SQL Injection)" | tee -a endpoint-analysis-log.txt
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                SQLI_STATUS=\$(curl -s -X POST ${BASE_URL}/login \
+                  -H "Content-Type: application/json" \
+                  -d '{"username":"admin'\'' OR '\''1'\''='\''1","password":"anything"}' \
+                  -o /tmp/sqli-response.json \
+                  -w "%{http_code}")
+                echo "   Status Code: \$SQLI_STATUS" | tee -a endpoint-analysis-log.txt
+                echo "   Response: \$(cat /tmp/sqli-response.json)" | tee -a endpoint-analysis-log.txt
+                if [ "\$SQLI_STATUS" = "401" ] || [ "\$SQLI_STATUS" = "400" ]; then
+                    echo "   ✅ SQL injection attempt rejected" | tee -a endpoint-analysis-log.txt
+                else
+                    echo "   🚨 Possible vulnerability detected" | tee -a endpoint-analysis-log.txt
+                fi
+                echo "" | tee -a endpoint-analysis-log.txt
+                
+                # 4. Experts Endpoint
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                echo "4️⃣  Testing: GET /api/experts (No Auth)" | tee -a endpoint-analysis-log.txt
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                EXPERTS_STATUS=\$(curl -s -o /tmp/experts-response.json -w "%{http_code}" ${BASE_URL}/api/experts)
+                echo "   Status Code: \$EXPERTS_STATUS" | tee -a endpoint-analysis-log.txt
+                if [ "\$EXPERTS_STATUS" = "200" ]; then
+                    echo "   Response: \$(cat /tmp/experts-response.json | head -c 300)..." | tee -a endpoint-analysis-log.txt
+                    echo "   ⚠️  Endpoint accessible without authentication" | tee -a endpoint-analysis-log.txt
+                else
+                    echo "   ✅ Authentication required (Status: \$EXPERTS_STATUS)" | tee -a endpoint-analysis-log.txt
+                fi
+                echo "" | tee -a endpoint-analysis-log.txt
+                
+                # 5. Calls Endpoint
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                echo "5️⃣  Testing: GET /api/calls (No Auth)" | tee -a endpoint-analysis-log.txt
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                CALLS_STATUS=\$(curl -s -o /tmp/calls-response.json -w "%{http_code}" ${BASE_URL}/api/calls)
+                echo "   Status Code: \$CALLS_STATUS" | tee -a endpoint-analysis-log.txt
+                if [ "\$CALLS_STATUS" = "200" ]; then
+                    echo "   Response: \$(cat /tmp/calls-response.json | head -c 300)..." | tee -a endpoint-analysis-log.txt
+                    echo "   ⚠️  Call data accessible without authentication" | tee -a endpoint-analysis-log.txt
+                else
+                    echo "   ✅ Authentication required (Status: \$CALLS_STATUS)" | tee -a endpoint-analysis-log.txt
+                fi
+                echo "" | tee -a endpoint-analysis-log.txt
+                
+                # 6. Users Status
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                echo "6️⃣  Testing: GET /api/users/status (No Auth)" | tee -a endpoint-analysis-log.txt
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                USERS_STATUS=\$(curl -s -o /tmp/users-response.json -w "%{http_code}" ${BASE_URL}/api/users/status)
+                echo "   Status Code: \$USERS_STATUS" | tee -a endpoint-analysis-log.txt
+                if [ "\$USERS_STATUS" = "200" ]; then
+                    echo "   Response: \$(cat /tmp/users-response.json | head -c 300)..." | tee -a endpoint-analysis-log.txt
+                    echo "   ⚠️  User data accessible without authentication" | tee -a endpoint-analysis-log.txt
+                else
+                    echo "   ✅ Authentication required (Status: \$USERS_STATUS)" | tee -a endpoint-analysis-log.txt
+                fi
+                echo "" | tee -a endpoint-analysis-log.txt
+                
+                # 7. Create Call
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                echo "7️⃣  Testing: POST /api/create-call (No Auth)" | tee -a endpoint-analysis-log.txt
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                CREATE_CALL_STATUS=\$(curl -s -X POST ${BASE_URL}/api/create-call \
+                  -H "Content-Type: application/json" \
+                  -d '{"userId":"testuser"}' \
+                  -o /tmp/create-call-response.json \
+                  -w "%{http_code}")
+                echo "   Status Code: \$CREATE_CALL_STATUS" | tee -a endpoint-analysis-log.txt
+                echo "   Response: \$(cat /tmp/create-call-response.json)" | tee -a endpoint-analysis-log.txt
+                if [ "\$CREATE_CALL_STATUS" = "200" ]; then
+                    echo "   🚨 Unauthorized call creation possible" | tee -a endpoint-analysis-log.txt
+                else
+                    echo "   ✅ Authentication/Authorization enforced" | tee -a endpoint-analysis-log.txt
+                fi
+                echo "" | tee -a endpoint-analysis-log.txt
+                
+                # 8. CORS Test
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                echo "8️⃣  Testing: CORS Configuration" | tee -a endpoint-analysis-log.txt
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                CORS_RESPONSE=\$(curl -s -H "Origin: https://malicious-site.com" -I ${BASE_URL}/health)
+                CORS_HEADER=\$(echo "\$CORS_RESPONSE" | grep -i "access-control-allow-origin" || echo "Not found")
+                echo "   CORS Header: \$CORS_HEADER" | tee -a endpoint-analysis-log.txt
+                if echo "\$CORS_HEADER" | grep -q "\\*"; then
+                    echo "   ⚠️  CORS allows all origins" | tee -a endpoint-analysis-log.txt
+                elif [ "\$CORS_HEADER" = "Not found" ]; then
+                    echo "   ✅ CORS not configured (restrictive)" | tee -a endpoint-analysis-log.txt
+                else
+                    echo "   ✅ CORS properly restricted" | tee -a endpoint-analysis-log.txt
+                fi
+                echo "" | tee -a endpoint-analysis-log.txt
+                
+                # 9. Security Headers
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                echo "9️⃣  Testing: Security Headers" | tee -a endpoint-analysis-log.txt
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                
+                HEADERS=\$(curl -s -I ${BASE_URL}/health)
+                
+                HAS_XFRAME=\$(echo "\$HEADERS" | grep -qi "X-Frame-Options" && echo "YES" || echo "NO")
+                HAS_XCONTENT=\$(echo "\$HEADERS" | grep -qi "X-Content-Type-Options" && echo "YES" || echo "NO")
+                HAS_HSTS=\$(echo "\$HEADERS" | grep -qi "Strict-Transport-Security" && echo "YES" || echo "NO")
+                HAS_CSP=\$(echo "\$HEADERS" | grep -qi "Content-Security-Policy" && echo "YES" || echo "NO")
+                
+                echo "   X-Frame-Options:        \$HAS_XFRAME" | tee -a endpoint-analysis-log.txt
+                echo "   X-Content-Type-Options: \$HAS_XCONTENT" | tee -a endpoint-analysis-log.txt
+                echo "   HSTS:                   \$HAS_HSTS" | tee -a endpoint-analysis-log.txt
+                echo "   CSP:                    \$HAS_CSP" | tee -a endpoint-analysis-log.txt
+                echo "" | tee -a endpoint-analysis-log.txt
+                
+                # Count issues
+                MANUAL_ISSUES=0
+                if [ "\$EXPERTS_STATUS" = "200" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                if [ "\$CALLS_STATUS" = "200" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                if [ "\$USERS_STATUS" = "200" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                if [ "\$CREATE_CALL_STATUS" = "200" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                if echo "\$CORS_HEADER" | grep -q "\\*"; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                if [ "\$HAS_XFRAME" = "NO" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                if [ "\$HAS_CSP" = "NO" ]; then MANUAL_ISSUES=\$((MANUAL_ISSUES + 1)); fi
+                
+                echo "=========================================" | tee -a endpoint-analysis-log.txt
+                echo "Manual Testing Results: \$MANUAL_ISSUES issues found" | tee -a endpoint-analysis-log.txt
+                echo "=========================================" | tee -a endpoint-analysis-log.txt
+                echo "" | tee -a endpoint-analysis-log.txt
+                
+                # Run ZAP scan
+                echo "=========================================" | tee -a endpoint-analysis-log.txt
+                echo "STEP 2: Running ZAP Automated Scan" | tee -a endpoint-analysis-log.txt
+                echo "=========================================" | tee -a endpoint-analysis-log.txt
+                echo "" | tee -a endpoint-analysis-log.txt
+                
+                docker run --rm \
+                    -v \$(pwd):/zap/wrk:rw \
+                    --network host \
+                    -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+                    -t ${BASE_URL} \
+                    -n /zap/wrk/zap-webrtc-context.yaml \
+                    -J zap-report.json \
+                    -r zap-report.html \
+                    -w zap-report.md \
+                    -I \
+                    -d 2>&1 | tee zap-scan-output.log || true
+                
+                # Analyze ZAP results
+                if [ -f zap-report.json ]; then
+                    echo "" | tee -a endpoint-analysis-log.txt
+                    echo "=========================================" | tee -a endpoint-analysis-log.txt
+                    echo "STEP 3: ZAP Scan Results" | tee -a endpoint-analysis-log.txt
+                    echo "=========================================" | tee -a endpoint-analysis-log.txt
+                    echo "" | tee -a endpoint-analysis-log.txt
+                    
+                    HIGH_ALERTS=\$(grep -c '"risk":"High"' zap-report.json 2>/dev/null || echo "0")
+                    MEDIUM_ALERTS=\$(grep -c '"risk":"Medium"' zap-report.json 2>/dev/null || echo "0")
+                    LOW_ALERTS=\$(grep -c '"risk":"Low"' zap-report.json 2>/dev/null || echo "0")
+                    INFO_ALERTS=\$(grep -c '"risk":"Informational"' zap-report.json 2>/dev/null || echo "0")
+                    
+                    echo "Vulnerability Count:" | tee -a endpoint-analysis-log.txt
+                    echo "  🔴 High:          \$HIGH_ALERTS" | tee -a endpoint-analysis-log.txt
+                    echo "  🟡 Medium:        \$MEDIUM_ALERTS" | tee -a endpoint-analysis-log.txt
+                    echo "  🔵 Low:           \$LOW_ALERTS" | tee -a endpoint-analysis-log.txt
+                    echo "  ⚪ Informational: \$INFO_ALERTS" | tee -a endpoint-analysis-log.txt
+                    echo "" | tee -a endpoint-analysis-log.txt
+                    
+                    # Extract actual vulnerability names found
+                    echo "Vulnerabilities Detected:" | tee -a endpoint-analysis-log.txt
+                    grep -o '"name":"[^"]*"' zap-report.json | cut -d'"' -f4 | sort -u | while read vuln; do
+                        COUNT=\$(grep -c "\\"name\\":\\"\$vuln\\"" zap-report.json || echo "0")
+                        echo "  • \$vuln (found \$COUNT times)" | tee -a endpoint-analysis-log.txt
+                    done
+                    echo "" | tee -a endpoint-analysis-log.txt
+                    
+                    # Extract high-risk findings details
+                    if [ "\$HIGH_ALERTS" -gt "0" ]; then
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                        echo "🔴 HIGH RISK FINDINGS:" | tee -a endpoint-analysis-log.txt
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a endpoint-analysis-log.txt
+                        grep -A 10 '"risk":"High"' zap-report.json | grep -o '"name":"[^"]*"\\|"url":"[^"]*"\\|"description":"[^"]*"' | head -30 | tee -a endpoint-analysis-log.txt
+                        echo "" | tee -a endpoint-analysis-log.txt
+                    fi
+                else
+                    echo "⚠️  ZAP report not generated" | tee -a endpoint-analysis-log.txt
+                fi
+                
+                # Generate final summary
+                cat > dast-final-summary.txt <<SUMMARY
+╔══════════════════════════════════════════════════════════════╗
+║         WebRTC DAST Scan Results - Build ${BUILD_NUMBER}            ║
+╚══════════════════════════════════════════════════════════════╝
+
+🎯 Target: ${BASE_URL}
+📅 Date: \$(date '+%Y-%m-%d %H:%M:%S')
+🔗 Commit: ${GIT_COMMIT_SHORT}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 SCAN RESULTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Manual Endpoint Testing:
+  Issues Found: \$MANUAL_ISSUES
+
+ZAP Automated Scan:
+  🔴 High Risk:     \${HIGH_ALERTS:-0}
+  🟡 Medium Risk:   \${MEDIUM_ALERTS:-0}
+  🔵 Low Risk:      \${LOW_ALERTS:-0}
+  ⚪ Info:          \${INFO_ALERTS:-0}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 ENDPOINT TEST RESULTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+GET  /health              → \$HEALTH_STATUS
+POST /login               → \$LOGIN_STATUS
+GET  /api/experts         → \$EXPERTS_STATUS
+GET  /api/calls           → \$CALLS_STATUS
+GET  /api/users/status    → \$USERS_STATUS
+POST /api/create-call     → \$CREATE_CALL_STATUS
+
+CORS Configuration:       \$(echo "\$CORS_HEADER" | grep -q "\\*" && echo "⚠️  Allows all origins" || echo "✅ Restricted")
+
+Security Headers:
+  X-Frame-Options:        \$HAS_XFRAME
+  X-Content-Type-Options: \$HAS_XCONTENT
+  HSTS:                   \$HAS_HSTS
+  CSP:                    \$HAS_CSP
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📎 DETAILED REPORTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📄 Endpoint Analysis:  endpoint-analysis-log.txt
+🔍 ZAP Scan Log:       zap-scan-output.log
+📊 ZAP HTML Report:    zap-report.html
+📋 ZAP JSON Report:    zap-report.json
+
+Jenkins Build: ${env.BUILD_URL}
+SUMMARY
+
+                cat dast-final-summary.txt
+            """
+            
+            // Parse results for Slack
+            def healthStatus = sh(script: "grep 'GET /health' dast-final-summary.txt | awk '{print \$NF}'", returnStdout: true).trim()
+            def expertsStatus = sh(script: "grep 'GET  /api/experts' dast-final-summary.txt | awk '{print \$NF}'", returnStdout: true).trim()
+            def callsStatus = sh(script: "grep 'GET  /api/calls' dast-final-summary.txt | awk '{print \$NF}'", returnStdout: true).trim()
+            def usersStatus = sh(script: "grep 'GET  /api/users/status' dast-final-summary.txt | awk '{print \$NF}'", returnStdout: true).trim()
+            def createCallStatus = sh(script: "grep 'POST /api/create-call' dast-final-summary.txt | awk '{print \$NF}'", returnStdout: true).trim()
+            
+            def highAlerts = sh(script: "grep 'High Risk:' dast-final-summary.txt | awk '{print \$NF}' | head -1", returnStdout: true).trim()
+            def mediumAlerts = sh(script: "grep 'Medium Risk:' dast-final-summary.txt | awk '{print \$NF}' | head -1", returnStdout: true).trim()
+            def lowAlerts = sh(script: "grep 'Low Risk:' dast-final-summary.txt | awk '{print \$NF}' | head -1", returnStdout: true).trim()
+            def manualIssues = sh(script: "grep 'Issues Found:' dast-final-summary.txt | awk '{print \$NF}'", returnStdout: true).trim()
+            
+            // Archive all reports
+            archiveArtifacts artifacts: '''
+                endpoint-analysis-log.txt,
+                zap-scan-output.log,
+                dast-final-summary.txt,
+                zap-report.json,
+                zap-report.html,
+                zap-report.md
+            ''', fingerprint: true, allowEmptyArchive: true
+            
+            // Publish HTML report
+            publishHTML([
+                allowMissing: false,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: '.',
+                reportFiles: 'zap-report.html',
+                reportName: 'ZAP DAST Report'
+            ])
+            
+            // Determine overall status
+            def totalIssues = (highAlerts.toInteger() + manualIssues.toInteger())
+            def alertColor = (highAlerts.toInteger() > 0) ? 'danger' : ((mediumAlerts.toInteger() > 5) ? 'warning' : 'good')
+            def statusEmoji = (totalIssues > 0) ? '⚠️' : '✅'
+            def statusText = (totalIssues > 0) ? 'Issues Found' : 'No Critical Issues'
+            
+            // Send comprehensive Slack notification
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',
+                channel: '#jenkins-alerts',
+                message: "${statusEmoji} *DAST Scan Completed - ${statusText}*",
+                attachments: [[
+                    color: alertColor,
+                    title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - DAST Results",
+                    title_link: "${env.BUILD_URL}",
+                    fields: [
+                        [
+                            title: '📊 Scan Summary',
+                            value: "Manual Issues: *${manualIssues}* | ZAP High: *${highAlerts}* | Medium: *${mediumAlerts}* | Low: *${lowAlerts}*",
+                            short: false
+                        ],
+                        [
+                            title: '🔍 Endpoint Results',
+                            value: """
+                            `/health` → ${healthStatus}
+                            `/api/experts` → ${expertsStatus}
+                            `/api/calls` → ${callsStatus}
+                            `/api/users/status` → ${usersStatus}
+                            `/api/create-call` → ${createCallStatus}
+                            """.stripIndent(),
+                            short: true
+                        ],
+                        [
+                            title: '🌐 Target',
+                            value: 'http://webrtc-medali.japaneast.cloudapp.azure.com',
+                            short: true
+                        ],
+                        [
+                            title: '📎 Reports & Logs',
+                            value: """
+                            • [📊 ZAP HTML Report](${env.BUILD_URL}ZAP_20DAST_20Report/)
+                            • [📄 Endpoint Analysis](${env.BUILD_URL}artifact/endpoint-analysis-log.txt)
+                            • [🔍 ZAP Scan Log](${env.BUILD_URL}artifact/zap-scan-output.log)
+                            • [📋 Final Summary](${env.BUILD_URL}artifact/dast-final-summary.txt)
+                            • [📥 JSON Report](${env.BUILD_URL}artifact/zap-report.json)
+                            """.stripIndent(),
+                            short: false
+                        ],
+                        [
+                            title: '🔗 Build Info',
+                            value: "Commit: `${env.GIT_COMMIT_SHORT}` | Build: #${env.BUILD_NUMBER}",
+                            short: false
+                        ]
+                    ],
+                    footer: 'DevSecOps Pipeline - DAST Analysis',
+                    footer_icon: 'https://www.zaproxy.org/img/zap-by-checkmarx.svg',
+                    ts: sh(script: 'date +%s', returnStdout: true).trim()
+                ]]
+            )
+            
+            // Quality gate
+            if (highAlerts.toInteger() > 0) {
+                unstable("⚠️  DAST found ${highAlerts} high-risk vulnerabilities. Review required!")
+            }
+            
+            echo "✅ DAST scan completed - ${totalIssues} total issues found"
+            echo "📊 View detailed reports in Jenkins artifacts"
+        }
+    }
+}
 
 
     }
