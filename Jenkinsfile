@@ -809,11 +809,11 @@ stage('Verify ArgoCD Sync') {
                 }
                 
                 # Create comprehensive endpoint test log
-                cat > endpoint-analysis-log.txt <<'LOGHEADER'
+                cat > endpoint-analysis-log.txt <<LOGHEADER
 ╔══════════════════════════════════════════════════════════════╗
 ║           WebRTC API Endpoint Analysis Log                  ║
 ║           Build: ${BUILD_NUMBER}                                     ║
-║           Date: $(date)                                      ║
+║           Date: \$(date)                                      ║
 ╚══════════════════════════════════════════════════════════════╝
 
 LOGHEADER
