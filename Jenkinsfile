@@ -35,55 +35,65 @@ pipeline {
                 echo "Building commit: ${env.GIT_COMMIT_SHORT}"
             }
         }
-        stage('Secret Scanning') {
-            steps {
-           script {
+stage('Secret Scanning') {
+    steps {
+        script {
             echo "🔍 Scanning for exposed secrets..."
             
-          sh '''
-                # Install Gitleaks if not present
-                if ! command -v gitleaks >/dev/null 2>&1; then
-                    curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.0/gitleaks_8.18.0_linux_x64.tar.gz | tar -xz
-                    chmod +x gitleaks
-                fi
-                
-                # Run secret scan
-                ./gitleaks detect --source . \
-                    --report-format json \
-                    --report-path gitleaks-report.json \
-                    --exit-code 0  # Don't fail build, just report
-                
-                # Count findings safely
-                SECRETS_FOUND=0
-                if [ -f gitleaks-report.json ] && [ -s gitleaks-report.json ]; then
-                    SECRETS_FOUND=$(grep -c '"Description"' gitleaks-report.json || echo 0)
-                    # Ensure single numeric output by removing newlines and non-numeric characters
-                    SECRETS_FOUND=$(echo "$SECRETS_FOUND" | tr -d '\\n' | grep -o '[0-9]*' || echo 0)
-                fi
-                echo "Found $SECRETS_FOUND potential secrets"
-                
-                # Optionally fail the build if secrets are found (adjust based on policy)
-                if [ "$SECRETS_FOUND" -gt 0 ]; then
-                    echo "ERROR: Secrets detected in the codebase. Please remediate before proceeding."
-                    exit 1  # Fail the build if secrets are found
-                fi
-            '''
-            
-            // Parse results
-            def secretsFound = "0"
-            if (fileExists('gitleaks-report.json')) {
-                secretsFound = sh(
-                    script: "grep -c '\"Description\"' gitleaks-report.json || echo '0'",
-                    returnStdout: true
-                ).trim()
-            }
-            
+            // Run Gitleaks and count secrets
+            def secretsFound = sh(
+                script: '''
+                    # Install jq for JSON parsing
+                    apk add jq || apt-get update && apt-get install -y jq || true
+                    
+                    # Install Gitleaks if not present
+                    if ! command -v gitleaks >/dev/null 2>&1; then
+                        curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.0/gitleaks_8.18.0_linux_x64.tar.gz | tar -xz
+                        chmod +x gitleaks
+                    fi
+                    
+                    # Run secret scan
+                    ./gitleaks detect --source . \
+                        --report-format json \
+                        --report-path gitleaks-report.json \
+                        --exit-code 0  # Don't fail build, just report
+                    
+                    # Initialize SECRETS_FOUND
+                    SECRETS_FOUND=0
+                    # Check if report exists and is non-empty
+                    if [ -f gitleaks-report.json ] && [ -s gitleaks-report.json ]; then
+                        # Count secrets using jq
+                        SECRETS_FOUND=$(jq '[.[] | select(.Description != null)] | length' gitleaks-report.json 2>/dev/null || echo "0")
+                        # Ensure single numeric output
+                        SECRETS_FOUND=$(echo "$SECRETS_FOUND" | grep -oE '^[0-9]+$' || echo "0")
+                    fi
+                    echo "Found $SECRETS_FOUND potential secrets"
+                    
+                    # Display report contents if secrets are found
+                    if [ "$SECRETS_FOUND" -gt 0 ]; then
+                        echo "ERROR: $SECRETS_FOUND secrets detected. Review gitleaks-report.json for details:"
+                        cat gitleaks-report.json
+                    else
+                        echo "No secrets found. Report archived for review."
+                    fi
+                    
+                    # Rename report for uniqueness
+                    if [ -f gitleaks-report.json ]; then
+                        mv gitleaks-report.json gitleaks-report-$BUILD_NUMBER.json
+                    fi
+                    
+                    # Output SECRETS_FOUND for Groovy
+                    echo "$SECRETS_FOUND"
+                ''',
+                returnStdout: true
+            ).trim()
+
             // Archive report
-            archiveArtifacts artifacts: 'gitleaks-report.json', 
+            archiveArtifacts artifacts: "gitleaks-report-${env.BUILD_NUMBER}.json", 
                 fingerprint: true, 
                 allowEmptyArchive: true
             
-            // Send notification
+            // Send Slack notification
             slackSend(
                 botUser: true,
                 tokenCredentialId: 'slack-bot-token',
@@ -95,7 +105,7 @@ pipeline {
                     fields: [
                         [title: 'Secrets Found', value: secretsFound, short: true],
                         [title: 'Status', value: secretsFound.toInteger() > 0 ? '⚠️ ACTION REQUIRED' : '✅ No secrets detected', short: true],
-                        [title: 'Report', value: "[View Report](${env.BUILD_URL}artifact/gitleaks-report.json)", short: false]
+                        [title: 'Report', value: "[View Report](${env.BUILD_URL}artifact/gitleaks-report-${env.BUILD_NUMBER}.json)", short: false]
                     ]
                 ]]
             )
@@ -106,10 +116,9 @@ pipeline {
             }
             
             echo "✅ Secret scanning completed"
-           }
-                }
+        }
+    }
 }
-
 
             stage('SonarQube Analysis') {
                 steps {
