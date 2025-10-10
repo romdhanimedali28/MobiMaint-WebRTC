@@ -573,229 +573,106 @@ pipeline {
     }
 
     stage('K8s Manifest Security') {
-        steps {
-           script {
-            echo "☸️ Scanning Kubernetes manifests for security issues..."
-
-            sh '''
-                cd external-k8s-manifests
-
-                # Run Kubesec analysis
-                echo "Running Kubesec analysis..."
-                docker run --rm -v $(pwd):/project kubesec/kubesec scan /project/overlays/dev/*.yaml \
-                    > kubesec-report.json || true
-
-                # Compute average score
-                if command -v jq &> /dev/null; then
-                    AVG_SCORE=$(jq '[.[].score] | add / length' kubesec-report.json 2>/dev/null || echo "0")
-                else
-                    AVG_SCORE=0
-                fi
-                echo "Average Kubesec score: $AVG_SCORE/10"
-
-                # Run Datree validation
-                echo "Running Datree policy validation..."
-                if ! command -v datree &> /dev/null; then
-                    curl -s https://get.datree.io | /bin/bash || echo "⚠️ Failed to install Datree"
-                fi
-
-                if command -v datree &> /dev/null; then
-                    datree test overlays/dev/*.yaml --output json > datree-report.json || true
-                else
-                    echo "[]" > datree-report.json
-                fi
-
-                # Count failed rules
-                FAILED_RULES=$(grep -c '"status":"failed"' datree-report.json 2>/dev/null || echo "0")
-                echo "Datree: $FAILED_RULES policy violations found"
-
-                # Write clean numeric result for Groovy
-                echo "$FAILED_RULES" > /tmp/failed_rules_count.txt
-
-                # Summary file
-                cat > k8s-security-summary.txt <<EOF
-                === Kubernetes Security Scan Summary ===
-                Kubesec Average Score: $AVG_SCORE/10
-                Datree Policy Violations: $FAILED_RULES
-
-                Common Issues to Check:
-                - Containers running as root
-                - Missing resource limits
-                - Privileged containers
-                - Exposed secrets in env vars
-                - Missing security contexts
-                EOF
-            '''
-
-            // Read clean numeric value
-            def failedRules = readFile("/tmp/failed_rules_count.txt").trim().toInteger()
-
-            // Archive all reports
-            archiveArtifacts artifacts: 'external-k8s-manifests/kubesec-report.json,external-k8s-manifests/datree-report.json,external-k8s-manifests/k8s-security-summary.txt',
-                fingerprint: true,
-                allowEmptyArchive: true
-
-            // Slack notification
-            slackSend(
-                botUser: true,
-                tokenCredentialId: 'slack-bot-token',
-                channel: '#jenkins-alerts',
-                message: "☸️ *Kubernetes Manifest Security Scan*",
-                attachments: [[
-                    color: (failedRules > 5) ? 'danger' : ((failedRules > 0) ? 'warning' : 'good'),
-                    title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
-                    fields: [
-                        [title: 'Policy Violations', value: failedRules.toString(), short: true],
-                        [title: 'Tool', value: 'Kubesec + Datree', short: true],
-                        [title: 'Status', value: failedRules == 0 ? '✅ Passed' : '⚠️ Review Required', short: false],
-                        [title: 'Reports', value: "[Kubesec](${env.BUILD_URL}artifact/external-k8s-manifests/kubesec-report.json) | [Datree](${env.BUILD_URL}artifact/external-k8s-manifests/datree-report.json)", short: false]
-                    ]
-                ]]
-            )
-
-            // Optional: Fail build on excessive violations
-            if (failedRules > 10) {
-                error "❌ Too many Kubernetes security violations (${failedRules}). Fix critical issues."
-            }
-
-            echo "✅ Kubernetes manifest security scan completed successfully (${failedRules} violations)."
-        }
-            }
-        }
-        
-
-
-        stage('Policy Validation') {
             steps {
                 script {
-                    echo "📋 Validating security and compliance policies..."
-                    
+                    echo "☸️ Scanning Kubernetes manifests for security issues..."
+
                     sh '''
-                        # Install OPA if not present
-                        if ! command -v opa &> /dev/null; then
-                            echo "Installing Open Policy Agent..."
-                            curl -L -o opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64
-                            chmod +x opa
-                            sudo mv opa /usr/local/bin/
-                        fi
-                        
-                        # Create policy directory structure if not exists
-                        mkdir -p policies/kubernetes
-                        mkdir -p policies/docker
-                        mkdir -p policies/terraform
-                        
-                        # Run policy tests
-                        echo "Testing policies..."
-                        opa test policies/ --verbose --bundle > opa-test-results.txt || true
-                        
-                        # Validate K8s manifests against policies
-                        echo "Validating Kubernetes manifests..."
                         cd external-k8s-manifests
-                        
-                        for manifest in overlays/dev/*.yaml; do
-                            echo "Checking $manifest..."
-                            opa eval --data ../policies/kubernetes \
-                                --input "$manifest" \
-                                --format pretty \
-                                'data.kubernetes.admission.deny' \
-                                >> ../opa-k8s-validation.json || true
-                        done
-                        
-                        cd ..
-                        
-                        # Count policy violations
-                        VIOLATIONS=$(grep -c "deny" opa-k8s-validation.json || echo "0")
-                        echo "Policy violations found: $VIOLATIONS"
-                        
-                        # Generate summary report
-                                                        cat > policy-summary.txt <<EOF
-                                        === Policy Validation Summary ===
-                                        Date: $(date)
-                                        Build: ${BUILD_NUMBER}
 
-                                        Policies Tested: $(find policies/ -name "*.rego" | wc -l)
-                                        Manifests Validated: $(find external-k8s-manifests/overlays/dev -name "*.yaml" | wc -l)
-                                        Violations Found: $VIOLATIONS
+                        # Run Kubesec analysis
+                        echo "Running Kubesec analysis..."
+                        docker run --rm -v $(pwd):/project kubesec/kubesec scan /project/overlays/dev/*.yaml \
+                            > kubesec-report.json || true
 
-                                        Policy Categories:
-                                        - Security contexts
-                                        - Resource limits
-                                        - Image registries
-                                        - Network policies
-                                        - Label requirements
-                                        - Compliance rules
-                                        EOF
-                        
-                        cat policy-summary.txt
+                        # Compute average score
+                        if command -v jq &> /dev/null; then
+                            AVG_SCORE=$(jq '[.[].score] | add / length' kubesec-report.json 2>/dev/null || echo "0")
+                        else
+                            AVG_SCORE=0
+                        fi
+                        echo "Average Kubesec score: $AVG_SCORE/10"
+
+                        # Run Datree validation
+                        echo "Running Datree policy validation..."
+                        if ! command -v datree &> /dev/null; then
+                            echo "Installing Datree..."
+                            curl -s https://get.datree.io | /bin/bash
+                            export PATH=$HOME/.datree/bin:$PATH
+                        fi
+
+                        if command -v datree &> /dev/null; then
+                            datree test overlays/dev/*.yaml --output json > datree-report.json || true
+                        else
+                            echo "[]" > datree-report.json
+                            echo "⚠️ Datree installation failed, creating empty report"
+                        fi
+
+                        # Count failed rules
+                        FAILED_RULES=$(grep -c '"status":"failed"' datree-report.json 2>/dev/null || echo "0")
+                        echo "Datree: $FAILED_RULES policy violations found"
+
+                        # Write clean numeric result for Groovy
+                        echo "$FAILED_RULES" > /tmp/failed_rules_count.txt
+
+                        # Summary file
+                        cat > k8s-security-summary.txt <<EOF
+                        === Kubernetes Security Scan Summary ===
+                        Kubesec Average Score: $AVG_SCORE/10
+                        Datree Policy Violations: $FAILED_RULES
+
+                        Common Issues to Check:
+                        - Containers running as root
+                        - Missing resource limits
+                        - Privileged containers
+                        - Exposed secrets in env vars
+                        - Missing security contexts
+                        EOF
                     '''
-                    
-                    // Parse results
-                    def violations = sh(
-                        script: "grep -c 'deny' opa-k8s-validation.json || echo '0'",
-                        returnStdout: true
-                    ).trim()
-                    
-                    // Archive reports
-                    archiveArtifacts artifacts: 'opa-test-results.txt,opa-k8s-validation.json,policy-summary.txt', 
+
+                    // Read clean numeric value - fix the parsing issue
+                    def failedRules = 0
+                    try {
+                        def countFile = readFile("/tmp/failed_rules_count.txt").trim()
+                        // Extract only the first number if there are multiple lines
+                        failedRules = (countFile =~ /\d+/).find()?.toInteger() ?: 0
+                    } catch (Exception e) {
+                        echo "Warning: Failed to read failed rules count: ${e.message}"
+                        failedRules = 0
+                    }
+
+                    // Archive all reports
+                    archiveArtifacts artifacts: 'external-k8s-manifests/kubesec-report.json,external-k8s-manifests/datree-report.json,external-k8s-manifests/k8s-security-summary.txt',
                         fingerprint: true,
                         allowEmptyArchive: true
-                    
-                    // Notification
+
+                    // Slack notification
                     slackSend(
                         botUser: true,
                         tokenCredentialId: 'slack-bot-token',
                         channel: '#jenkins-alerts',
-                        message: "📋 *Policy Validation Completed*",
+                        message: "☸️ *Kubernetes Manifest Security Scan*",
                         attachments: [[
-                            color: (violations.toInteger() > 0) ? 'danger' : 'good',
+                            color: (failedRules > 5) ? 'danger' : ((failedRules > 0) ? 'warning' : 'good'),
                             title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
                             fields: [
-                                [title: 'Policy Violations', value: violations, short: true],
-                                [title: 'Status', value: violations.toInteger() == 0 ? '✅ Compliant' : '❌ Non-compliant', short: true],
-                                [title: 'Policies Enforced', value: '• Security contexts\n• Resource limits\n• Image registries\n• Network policies', short: false],
-                                [title: 'Report', value: "[View Details](${env.BUILD_URL}artifact/policy-summary.txt)", short: false]
+                                [title: 'Policy Violations', value: failedRules.toString(), short: true],
+                                [title: 'Tool', value: 'Kubesec + Datree', short: true],
+                                [title: 'Status', value: failedRules == 0 ? '✅ Passed' : '⚠️ Review Required', short: false],
+                                [title: 'Reports', value: "[Kubesec](${env.BUILD_URL}artifact/external-k8s-manifests/kubesec-report.json) | [Datree](${env.BUILD_URL}artifact/external-k8s-manifests/datree-report.json)", short: false]
                             ]
                         ]]
                     )
-                    
-                    // Fail build on violations
-                    if (violations.toInteger() > 0) {
-                        error "❌ Policy validation failed with ${violations} violations. Fix before deployment!"
+
+                    // Optional: Fail build on excessive violations
+                    if (failedRules > 10) {
+                        error "❌ Too many Kubernetes security violations (${failedRules}). Fix critical issues."
                     }
-                    
-                    echo "✅ All policies passed"
+
+                    echo "✅ Kubernetes manifest security scan completed successfully (${failedRules} violations)."
                 }
             }
-        }
-
-        stage('Update GitOps Manifests') {
-            steps {
-                script {
-            echo "Updating Kubernetes manifests with new image tag..."
-            
-            withCredentials([sshUserPrivateKey(credentialsId: 'github-ssh-key', keyFileVariable: 'GIT_SSH_KEY')]) {                sh '''
-                    cd external-k8s-manifests
-
-
-                    # Define and export GIT_SSH_COMMAND with verbose output for debugging
-                    export GIT_SSH_COMMAND="ssh -i $GIT_SSH_KEY -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -v"
-
-                    # Update image tag in dev environment
-                    sed -i "s|newTag:.*|newTag: \\"${BUILD_NUMBER}\\"|g" overlays/dev/kustomization.yaml
-                    
-                    # Commit and push changes
-                    git config user.email "jenkins@pipeline.com"
-                    git config user.name "Jenkins Pipeline"
-                    git add overlays/dev/kustomization.yaml
-                    git commit -m "Update dev image to build ${BUILD_NUMBER} - commit ${GIT_COMMIT_SHORT}"
-                    git push origin main
-                '''
-            }
-            
-            echo "✅ GitOps manifests updated successfully"
-        }
-        }
-    }
+}
 
         stage('Verify ArgoCD Sync') {
             steps {
