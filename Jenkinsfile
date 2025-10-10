@@ -35,16 +35,24 @@ pipeline {
                 echo "Building commit: ${env.GIT_COMMIT_SHORT}"
             }
         }
-stage('Secret Scanning') {
-    steps {
-        script {
-            echo "🔍 Scanning for exposed secrets..."
+        stage('Secret Scanning') {
+          steps {
+               script {
+              echo "🔍 Scanning for exposed secrets..."
             
             // Run Gitleaks and count secrets
             def secretsFound = sh(
                 script: '''
-                    # Install jq for JSON parsing
-                    apk add jq || apt-get update && apt-get install -y jq || true
+                    # Check if jq is installed, attempt installation if not
+                    if ! command -v jq >/dev/null 2>&1; then
+                        if command -v apk >/dev/null 2>&1; then
+                            apk add --no-cache jq
+                        elif command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+                            apt-get update && apt-get install -y jq
+                        else
+                            echo "WARNING: jq not installed and cannot be installed (no apk or root apt-get). Falling back to grep."
+                        fi
+                    fi
                     
                     # Install Gitleaks if not present
                     if ! command -v gitleaks >/dev/null 2>&1; then
@@ -56,15 +64,16 @@ stage('Secret Scanning') {
                     ./gitleaks detect --source . \
                         --report-format json \
                         --report-path gitleaks-report.json \
-                        --exit-code 0  # Don't fail build, just report
+                        --exit-code 0
                     
                     # Initialize SECRETS_FOUND
                     SECRETS_FOUND=0
-                    # Check if report exists and is non-empty
                     if [ -f gitleaks-report.json ] && [ -s gitleaks-report.json ]; then
-                        # Count secrets using jq
-                        SECRETS_FOUND=$(jq '[.[] | select(.Description != null)] | length' gitleaks-report.json 2>/dev/null || echo "0")
-                        # Ensure single numeric output
+                        if command -v jq >/dev/null 2>&1; then
+                            SECRETS_FOUND=$(jq '[.[] | select(.Description != null)] | length' gitleaks-report.json 2>/dev/null || echo "0")
+                        else
+                            SECRETS_FOUND=$(grep -c '"Description"' gitleaks-report.json 2>/dev/null || echo "0")
+                        fi
                         SECRETS_FOUND=$(echo "$SECRETS_FOUND" | grep -oE '^[0-9]+$' || echo "0")
                     fi
                     echo "Found $SECRETS_FOUND potential secrets"
@@ -119,6 +128,7 @@ stage('Secret Scanning') {
         }
     }
 }
+
 
             stage('SonarQube Analysis') {
                 steps {
