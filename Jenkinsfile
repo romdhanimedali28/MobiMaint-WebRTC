@@ -37,11 +37,11 @@ pipeline {
         }
         
         stage('Secret Scanning') {
-    steps {
-        script {
-            echo "🔍 Scanning for exposed secrets..."
+          steps {
+            script {
+                echo "🔍 Scanning for exposed secrets..."
 
-            def secretsFound = sh(
+              def secretsFound = sh(
                 script: '''
                     # Ensure jq is installed
                     if ! command -v jq >/dev/null 2>&1; then
@@ -124,8 +124,8 @@ pipeline {
             }
 
             echo "✅ Secret scanning completed successfully with $secretsCount leaks."
-        }
-    }
+                }
+            }
 }
 
 
@@ -486,16 +486,25 @@ pipeline {
                 }
             }
         }
+
         stage('Infrastructure Security Scan') {
                 steps {
                     script {
                         echo "Scanning Terraform configuration with Checkov..."
                         
                         sh '''
+
+                                    # Install Checkov if not installed
+                            if ! command -v checkov &> /dev/null; then
+                                echo "Installing Checkov..."
+                                pip install --user checkov
+                                export PATH=$PATH:/home/jenkins/.local/bin
+                            fi 
+                            export PATH=$HOME/.local/bin:$PATH
                             cd external-k8s-manifests/terraform
                             # Run Checkov scan
-                            /home/jenkins/.local/bin/checkov -d . --framework terraform --output json > checkov-report.json || true
-                            /home/jenkins/.local/bin/checkov -d . --framework terraform --output cli || true
+                             checkov -d . --framework terraform --output json > checkov-report.json || true
+                            checkov -d . --framework terraform --output cli || true
                 
 
                             echo "✅ Checkov scan completed"
@@ -563,90 +572,96 @@ pipeline {
                 }
     }
 
-     stage('K8s Manifest Security') {
-            steps {
-                script {
-                      echo "☸️ Scanning Kubernetes manifests for security issues..."
-            
-                     sh '''
-                                cd external-k8s-manifests
-                                
-                                # Kubesec scan (scores 0-10, higher is better)
-                                echo "Running Kubesec analysis..."
-                                docker run --rm -v $(pwd):/project kubesec/kubesec scan /project/overlays/dev/*.yaml \
-                                    > kubesec-report.json || true
-                                
-                                # Calculate average security score
-                                if command -v jq &> /dev/null; then
-                                    AVG_SCORE=$(jq '[.[].score] | add / length' kubesec-report.json || echo "0")
-                                    echo "Average Kubesec score: $AVG_SCORE/10"
-                                fi
-                                
-                                # Datree policy check
-                                echo "Running Datree policy validation..."
-                                if ! command -v datree &> /dev/null; then
-                                    curl https://get.datree.io | /bin/bash
-                                fi
-                                
-                                datree test overlays/dev/*.yaml \
-                                    --output json > datree-report.json || true
-                                
-                                # Count failed rules
-                                FAILED_RULES=$(grep -c '"status":"failed"' datree-report.json || echo "0")
-                                echo "Datree: $FAILED_RULES policy violations found"
-                                
-                                # Generate summary
-                                cat > k8s-security-summary.txt <<EOF
-                === Kubernetes Security Scan Summary ===
-                Kubesec Average Score: $AVG_SCORE/10
-                Datree Policy Violations: $FAILED_RULES
+    stage('K8s Manifest Security') {
+        steps {
+           script {
+            echo "☸️ Scanning Kubernetes manifests for security issues..."
 
-                Common Issues to Check:
-                - Containers running as root
-                - Missing resource limits
-                - Privileged containers
-                - Exposed secrets in env vars
-                - Missing security contexts
-                EOF
-                            '''
-            
-            // Parse results
-            def failedRules = sh(
-                script: "grep -c '\"status\":\"failed\"' external-k8s-manifests/datree-report.json || echo '0'",
-                returnStdout: true
-            ).trim()
-            
-            // Archive reports
-            archiveArtifacts artifacts: 'external-k8s-manifests/kubesec-report.json,external-k8s-manifests/datree-report.json,external-k8s-manifests/k8s-security-summary.txt', 
+            sh '''
+                cd external-k8s-manifests
+
+                # Run Kubesec analysis
+                echo "Running Kubesec analysis..."
+                docker run --rm -v $(pwd):/project kubesec/kubesec scan /project/overlays/dev/*.yaml \
+                    > kubesec-report.json || true
+
+                # Compute average score
+                if command -v jq &> /dev/null; then
+                    AVG_SCORE=$(jq '[.[].score] | add / length' kubesec-report.json 2>/dev/null || echo "0")
+                else
+                    AVG_SCORE=0
+                fi
+                echo "Average Kubesec score: $AVG_SCORE/10"
+
+                # Run Datree validation
+                echo "Running Datree policy validation..."
+                if ! command -v datree &> /dev/null; then
+                    curl -s https://get.datree.io | /bin/bash || echo "⚠️ Failed to install Datree"
+                fi
+
+                if command -v datree &> /dev/null; then
+                    datree test overlays/dev/*.yaml --output json > datree-report.json || true
+                else
+                    echo "[]" > datree-report.json
+                fi
+
+                # Count failed rules
+                FAILED_RULES=$(grep -c '"status":"failed"' datree-report.json 2>/dev/null || echo "0")
+                echo "Datree: $FAILED_RULES policy violations found"
+
+                # Write clean numeric result for Groovy
+                echo "$FAILED_RULES" > /tmp/failed_rules_count.txt
+
+                # Summary file
+                cat > k8s-security-summary.txt <<EOF
+=== Kubernetes Security Scan Summary ===
+Kubesec Average Score: $AVG_SCORE/10
+Datree Policy Violations: $FAILED_RULES
+
+Common Issues to Check:
+- Containers running as root
+- Missing resource limits
+- Privileged containers
+- Exposed secrets in env vars
+- Missing security contexts
+EOF
+            '''
+
+            // Read clean numeric value
+            def failedRules = readFile("/tmp/failed_rules_count.txt").trim().toInteger()
+
+            // Archive all reports
+            archiveArtifacts artifacts: 'external-k8s-manifests/kubesec-report.json,external-k8s-manifests/datree-report.json,external-k8s-manifests/k8s-security-summary.txt',
                 fingerprint: true,
                 allowEmptyArchive: true
-            
-            // Notification
+
+            // Slack notification
             slackSend(
                 botUser: true,
                 tokenCredentialId: 'slack-bot-token',
                 channel: '#jenkins-alerts',
                 message: "☸️ *Kubernetes Manifest Security Scan*",
                 attachments: [[
-                    color: (failedRules.toInteger() > 5) ? 'danger' : ((failedRules.toInteger() > 0) ? 'warning' : 'good'),
+                    color: (failedRules > 5) ? 'danger' : ((failedRules > 0) ? 'warning' : 'good'),
                     title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
                     fields: [
-                        [title: 'Policy Violations', value: failedRules, short: true],
+                        [title: 'Policy Violations', value: failedRules.toString(), short: true],
                         [title: 'Tool', value: 'Kubesec + Datree', short: true],
-                        [title: 'Status', value: failedRules.toInteger() == 0 ? '✅ Passed' : '⚠️ Review Required', short: false],
-                        [title: 'Reports', value: "[Kubesec](${env.BUILD_URL}artifact/kubesec-report.json) | [Datree](${env.BUILD_URL}artifact/datree-report.json)", short: false]
+                        [title: 'Status', value: failedRules == 0 ? '✅ Passed' : '⚠️ Review Required', short: false],
+                        [title: 'Reports', value: "[Kubesec](${env.BUILD_URL}artifact/external-k8s-manifests/kubesec-report.json) | [Datree](${env.BUILD_URL}artifact/external-k8s-manifests/datree-report.json)", short: false]
                     ]
                 ]]
             )
-            
-            // Optional: Fail on critical issues
-            if (failedRules.toInteger() > 10) {
-                error "❌ Too many K8s security violations (${failedRules}). Fix critical issues."
+
+            // Optional: Fail build on excessive violations
+            if (failedRules > 10) {
+                error "❌ Too many Kubernetes security violations (${failedRules}). Fix critical issues."
             }
-            
-            echo "✅ Kubernetes manifest security scan completed"
+
+            echo "✅ Kubernetes manifest security scan completed successfully (${failedRules} violations)."
         }
     }
+}
 }
 
 
