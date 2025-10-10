@@ -35,13 +35,14 @@ pipeline {
                 echo "Building commit: ${env.GIT_COMMIT_SHORT}"
             }
         }
+        
         stage('Secret Scanning') {
-          steps {
-               script {
-              echo "🔍 Scanning for exposed secrets..."
+    steps {
+        script {
+            echo "🔍 Scanning for exposed secrets..."
             
             // Run Gitleaks and count secrets
-            def secretsFound = sh(
+            def secretsOutput = sh(
                 script: '''
                     # Check if jq is installed, attempt installation if not
                     if ! command -v jq >/dev/null 2>&1; then
@@ -76,27 +77,37 @@ pipeline {
                         fi
                         SECRETS_FOUND=$(echo "$SECRETS_FOUND" | grep -oE '^[0-9]+$' || echo "0")
                     fi
-                    echo "Found $SECRETS_FOUND potential secrets"
                     
-                    # Display report contents if secrets are found
-                    if [ "$SECRETS_FOUND" -gt 0 ]; then
-                        echo "ERROR: $SECRETS_FOUND secrets detected. Review gitleaks-report.json for details:"
-                        cat gitleaks-report.json
-                    else
-                        echo "No secrets found. Report archived for review."
-                    fi
-                    
-                    # Rename report for uniqueness
-                    if [ -f gitleaks-report.json ]; then
-                        mv gitleaks-report.json gitleaks-report-$BUILD_NUMBER.json
-                    fi
-                    
-                    # Output SECRETS_FOUND for Groovy
-                    echo "$SECRETS_FOUND"
+                    # Output ONLY the number for Groovy parsing
+                    echo "SECRETS_COUNT=$SECRETS_FOUND"
                 ''',
                 returnStdout: true
             ).trim()
 
+            // Extract just the number from the output
+            def secretsFound = 0
+            def countMatch = secretsOutput =~ /SECRETS_COUNT=(\d+)/
+            if (countMatch) {
+                secretsFound = countMatch[0][1].toInteger()
+            }
+            
+            echo "Found ${secretsFound} potential secrets"
+            
+            // Rename report for uniqueness
+            sh """
+                if [ -f gitleaks-report.json ]; then
+                    mv gitleaks-report.json gitleaks-report-${env.BUILD_NUMBER}.json
+                fi
+            """
+            
+            // Display results
+            if (secretsFound > 0) {
+                echo "ERROR: ${secretsFound} secrets detected. Review gitleaks-report-${env.BUILD_NUMBER}.json for details."
+                sh "cat gitleaks-report-${env.BUILD_NUMBER}.json || true"
+            } else {
+                echo "No secrets found. Report archived for review."
+            }
+            
             // Archive report
             archiveArtifacts artifacts: "gitleaks-report-${env.BUILD_NUMBER}.json", 
                 fingerprint: true, 
@@ -109,19 +120,19 @@ pipeline {
                 channel: '#jenkins-alerts',
                 message: "🔐 *Secret Scanning Completed*",
                 attachments: [[
-                    color: (secretsFound.toInteger() > 0) ? 'danger' : 'good',
+                    color: (secretsFound > 0) ? 'danger' : 'good',
                     title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
                     fields: [
-                        [title: 'Secrets Found', value: secretsFound, short: true],
-                        [title: 'Status', value: secretsFound.toInteger() > 0 ? '⚠️ ACTION REQUIRED' : '✅ No secrets detected', short: true],
+                        [title: 'Secrets Found', value: secretsFound.toString(), short: true],
+                        [title: 'Status', value: secretsFound > 0 ? '⚠️ ACTION REQUIRED' : '✅ No secrets detected', short: true],
                         [title: 'Report', value: "[View Report](${env.BUILD_URL}artifact/gitleaks-report-${env.BUILD_NUMBER}.json)", short: false]
                     ]
                 ]]
             )
             
             // Fail build if secrets found (STRICT MODE)
-            if (secretsFound.toInteger() > 0) {
-                error "❌ Secrets detected! Remove them before proceeding."
+            if (secretsFound > 0) {
+                error "❌ ${secretsFound} secrets detected! Remove them before proceeding."
             }
             
             echo "✅ Secret scanning completed"
