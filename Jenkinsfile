@@ -70,7 +70,7 @@ pipeline {
                                 -Dsonar.gitlab.commit_sha=${GIT_COMMIT_SHORT}
                         """
                     }
-                    timeout(time: 10, unit: 'MINUTES') {
+                    timeout(time: 2, unit: 'MINUTES') {
                         def qg = waitForQualityGate()
                         if (qg.status != 'OK') {
                             error "Pipeline aborted due to SonarQube quality gate failure: ${qg.status}"
