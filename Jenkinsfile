@@ -98,7 +98,7 @@ pipeline {
      
       stage('Parallel Security Scans') {
             parallel {
-                
+                   failFast true
                     stage('Secret Scanning') {
                         steps {
                         script {
@@ -479,7 +479,7 @@ pipeline {
                             }
                         }
                     }
-            failFast true 
+             
             }
     }
 
@@ -507,6 +507,7 @@ pipeline {
 
         stage('Parallel Docker Operations') {
             parallel {
+                           failFast true 
                 stage('Docker Security Scan') {
                     steps {
                         script {
@@ -663,7 +664,6 @@ pipeline {
                         }
                     }
                 }
-           failFast true 
             }}
        
       
@@ -695,6 +695,7 @@ pipeline {
           
         stage('Parallel GitOps Deployment') {
             parallel {
+                failFast true
                 stage('Update GitOps Manifests') {
                     steps {
                         script {
