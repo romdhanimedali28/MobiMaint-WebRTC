@@ -676,15 +676,25 @@ pipeline {
 
           
         stage('Update GitOps Manifests') {
-            // Update image tag in kustomization.yaml
-            sh """
-                cd external-k8s-manifests
-                yq eval ".images[0].newTag = \\"${BUILD_NUMBER}\\"" -i overlays/dev/kustomization.yaml
-                git add overlays/dev/kustomization.yaml
-                git commit -m "CI: Update image to ${BUILD_NUMBER}"
-                git push origin main
-            """
-        }
+                steps {
+                    script {
+                        echo "🔄 Updating GitOps manifests with new image tag..."
+
+                        sh """
+                            cd external-k8s-manifests
+                            yq eval ".images[0].newTag = \\"${BUILD_NUMBER}\\"" -i overlays/dev/kustomization.yaml
+
+                            git config user.email "jenkins@localhost"
+                            git config user.name "Jenkins CI"
+
+                            git add overlays/dev/kustomization.yaml
+                            git commit -m "CI: Update image to ${BUILD_NUMBER}"
+                            git push origin main
+                        """
+                    }
+                }
+            }
+
       
 
         stage('Wait for ArgoCD Sync') {
