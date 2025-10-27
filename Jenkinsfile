@@ -721,40 +721,40 @@ pipeline {
                     }
             }
 
-stage('Check ArgoCD App Status') {
-    steps {
-        script {
-            echo "⏳ Checking ArgoCD sync and health status..."
+                stage('Check ArgoCD App Status') {
+                    steps {
+                        script {
+                            echo "⏳ Checking ArgoCD sync and health status..."
 
-            timeout(time: 10, unit: 'MINUTES') {
-                waitUntil {
-                  withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG')]) {
-                        def syncStatus = sh(
-                            script: "kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.sync.status}' 2>/dev/null || echo 'Unknown'",
-                            returnStdout: true
-                        ).trim()
-                        
-                        def healthStatus = sh(
-                            script: "kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.health.status}' 2>/dev/null || echo 'Unknown'",
-                            returnStdout: true
-                        ).trim()
-                        
-                        echo "Current status: Sync=${syncStatus}, Health=${healthStatus}"
-                        
-                        if (syncStatus == "Synced" && healthStatus == "Healthy") {
-                            echo "✅ ArgoCD app is synced and healthy!"
-                            return true
-                        } else {
-                            echo "⏳ Waiting for ArgoCD app to become healthy..."
-                            sleep(30)
-                            return false
+                            timeout(time: 10, unit: 'MINUTES') {
+                                waitUntil {
+                                withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG')]) {
+                                        def syncStatus = sh(
+                                            script: "kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.sync.status}' 2>/dev/null || echo 'Unknown'",
+                                            returnStdout: true
+                                        ).trim()
+                                        
+                                        def healthStatus = sh(
+                                            script: "kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.health.status}' 2>/dev/null || echo 'Unknown'",
+                                            returnStdout: true
+                                        ).trim()
+                                        
+                                        echo "Current status: Sync=${syncStatus}, Health=${healthStatus}"
+                                        
+                                        if (syncStatus == "Synced" && healthStatus == "Healthy") {
+                                            echo "✅ ArgoCD app is synced and healthy!"
+                                            return true
+                                        } else {
+                                            echo "⏳ Waiting for ArgoCD app to become healthy..."
+                                            sleep(30)
+                                            return false
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
-    }
-}
 
            
            
@@ -766,7 +766,7 @@ stage('Check ArgoCD App Status') {
                 script {
                     echo "🔍 Verifying deployment status..."
                     
-                    withEnv(["KUBECONFIG=${env.KUBECONFIG_PATH}"]) {
+                    withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG')]) {
                         sh """
                             echo "=== Application Details ==="
                             kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o yaml | grep -A 10 -B 5 'status:'
