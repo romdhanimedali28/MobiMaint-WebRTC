@@ -1,11 +1,11 @@
-# Use Node.js 18 Alpine for smaller image size
-FROM node:18-alpine3.18
+# Switch to Node.js Slim (Debian-based) - much more reliable
+FROM node:18-slim
 
 # Set working directory
 WORKDIR /app
 
-# Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
+# Install dumb-init from Debian repos (much more reliable)
+RUN apt-get update && apt-get install -y dumb-init && rm -rf /var/lib/apt/lists/*
 
 # Copy package files first for better layer caching
 COPY package*.json ./
@@ -17,8 +17,8 @@ RUN npm ci --only=production && npm cache clean --force
 COPY server.js ./
 
 # Create non-root user for security
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S webrtc -u 1001 -G nodejs
+RUN groupadd -r -g 1001 nodejs && \
+    useradd -r -u 1001 -g nodejs webrtc
 
 # Change ownership of the app directory
 RUN chown -R webrtc:nodejs /app
@@ -31,7 +31,7 @@ EXPOSE 3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+    CMD node -e "require('http').get('http://localhost:3000/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
