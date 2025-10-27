@@ -4,8 +4,9 @@ FROM node:18-slim
 # Set working directory
 WORKDIR /app
 
-# Install dumb-init from Debian repos (much more reliable)
-RUN apt-get update && apt-get install -y dumb-init && rm -rf /var/lib/apt/lists/*
+# Install dumb-init and clean up
+RUN apt-get update && apt-get install -y dumb-init && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy package files first for better layer caching
 COPY package*.json ./
@@ -16,7 +17,7 @@ RUN npm ci --only=production && npm cache clean --force
 # Copy server code
 COPY server.js ./
 
-# Create non-root user for security
+# Create non-root user and group
 RUN groupadd -r -g 1001 nodejs && \
     useradd -r -u 1001 -g nodejs webrtc
 
@@ -29,8 +30,8 @@ USER webrtc
 # Expose port 3000
 EXPOSE 3000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# Health check with Node.js (adjusted start period for app startup)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD node -e "require('http').get('http://localhost:3000/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
 # Use dumb-init to handle signals properly
