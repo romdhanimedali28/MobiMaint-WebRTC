@@ -693,11 +693,20 @@ pipeline {
           
         stage('Parallel GitOps Deployment') {
             parallel(failFast: true) {
-               stage('Update GitOps Manifests') {
+              stage('Update GitOps Manifests') {
                     steps {
                         script {
                             echo "🔄 Updating GitOps manifests with new image tag..."
-                               sh """
+                            
+                            // Use Jenkins credentials for git operations
+                            withCredentials([sshUserPrivateKey(credentialsId: 'github-ssh-key', keyFileVariable: 'SSH_KEY')]) {
+                                sh """
+                                    # Configure SSH to use the provided key
+                                    mkdir -p ~/.ssh
+                                    cp \${SSH_KEY} ~/.ssh/id_rsa
+                                    chmod 600 ~/.ssh/id_rsa
+                                    ssh-keyscan github.com >> ~/.ssh/known_hosts
+                                    
                                     cd external-k8s-manifests
                                     sed -i "s/newTag: .*/newTag: ${BUILD_NUMBER}/" overlays/dev/kustomization.yaml
                                     
@@ -707,9 +716,10 @@ pipeline {
                                     git commit -m "CI: Update image to ${BUILD_NUMBER}"
                                     git push origin main
                                 """
+                            }
                         }
                     }
-            }
+                }
 
                 stage('Wait for ArgoCD Sync') {
                     steps {
