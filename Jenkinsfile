@@ -761,52 +761,52 @@ pipeline {
             }
         }
 
-        stage('Verify Deployment') {
-            steps {
-                script {
-                    echo "🔍 Verifying deployment status..."
-                    
-                    withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG')]) {
-                        sh """
-                            echo "=== Application Details ==="
-                            kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o yaml | grep -A 10 -B 5 'status:'
-                            
-                            echo "=== Deployment Status ==="
-                            kubectl get deployment -l app=webrtc-signaling-server -o wide
-                            
-                            echo "=== Pod Status ==="
-                            kubectl get pods -l app=webrtc-signaling-server -o wide
-                            
-                            echo "=== Service Status ==="
-                            kubectl get svc -l app=webrtc-signaling-server -o wide
-                            
-                            echo "=== Checking Rollout Status ==="
-                            kubectl rollout status deployment/webrtc-signaling-server --timeout=300s
-                            
-                            echo "=== Current Image Version ==="
-                            kubectl get deployment webrtc-signaling-server -o jsonpath='{.spec.template.spec.containers[0].image}'
-                            echo ""
-                        """
-                    }
-                    
-                    // Verify the correct image is running
-                    def currentImage = sh(
-                        script: """
-                            kubectl --kubeconfig=${KUBECONFIG_PATH} get deployment webrtc-signaling-server -o jsonpath='{.spec.template.spec.containers[0].image}'
-                        """,
-                        returnStdout: true
-                    ).trim()
-                    
-                    def expectedImage = "${DOCKERHUB_REPO}:${BUILD_NUMBER}"
-                    
-                    if (currentImage == expectedImage) {
-                        echo "✅ Verified: Correct image deployed - ${currentImage}"
-                    } else {
-                        echo "⚠️ Warning: Image mismatch. Expected: ${expectedImage}, Got: ${currentImage}"
-                    }
+      stage('Verify Deployment') {
+    steps {
+        script {
+            echo "🔍 Verifying deployment status..."
+
+            withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG')]) {
+                // Main kubectl checks
+                sh """
+                    echo "=== Application Details ==="
+                    kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o yaml | grep -A 10 -B 5 'status:'
+
+                    echo "=== Deployment Status ==="
+                    kubectl get deployment -l app=webrtc-signaling-server -o wide
+
+                    echo "=== Pod Status ==="
+                    kubectl get pods -l app=webrtc-signaling-server -o wide
+
+                    echo "=== Service Status ==="
+                    kubectl get svc -l app=webrtc-signaling-server -o wide
+
+                    echo "=== Checking Rollout Status ==="
+                    kubectl rollout status deployment/webrtc-signaling-server --timeout=300s
+
+                    echo "=== Current Image Version ==="
+                    kubectl get deployment webrtc-signaling-server -o jsonpath='{.spec.template.spec.containers[0].image}'
+                    echo ""
+                """
+
+                // Verify the correct image is running
+                def currentImage = sh(
+                    script: "kubectl get deployment webrtc-signaling-server -o jsonpath='{.spec.template.spec.containers[0].image}'",
+                    returnStdout: true
+                ).trim()
+
+                def expectedImage = "${DOCKERHUB_REPO}:${BUILD_NUMBER}"
+
+                if (currentImage == expectedImage) {
+                    echo "✅ Verified: Correct image deployed - ${currentImage}"
+                } else {
+                    echo "⚠️ Warning: Image mismatch. Expected: ${expectedImage}, Got: ${currentImage}"
                 }
             }
         }
+    }
+}
+
 
         stage('DAST Scan') {
             steps {
