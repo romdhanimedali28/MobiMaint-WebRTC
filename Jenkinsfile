@@ -813,7 +813,7 @@ pipeline {
         script {
             echo "🎯 Running DAST on Local Kubernetes Deployment..."
 
-            def NODE_PORT = "30001"  // NodePort of your service
+            def NODE_PORT = "30936"  // NodePort of your service
             def NODE_IP = env.MASTER_NODE_IP  // Master node IP
             def BASE_URL = "http://${NODE_IP}:${NODE_PORT}"
 
