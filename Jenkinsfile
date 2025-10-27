@@ -693,19 +693,21 @@ pipeline {
           
         stage('Parallel GitOps Deployment') {
             parallel(failFast: true) {
-              stage('Update GitOps Manifests') {
+             stage('Update GitOps Manifests') {
                     steps {
                         script {
                             echo "🔄 Updating GitOps manifests with new image tag..."
                             
-                            // Use Jenkins credentials for git operations
                             withCredentials([sshUserPrivateKey(credentialsId: 'github-ssh-key', keyFileVariable: 'SSH_KEY')]) {
                                 sh """
-                                    # Configure SSH to use the provided key
+                                    # Setup SSH
                                     mkdir -p ~/.ssh
                                     cp \${SSH_KEY} ~/.ssh/id_rsa
                                     chmod 600 ~/.ssh/id_rsa
                                     ssh-keyscan github.com >> ~/.ssh/known_hosts
+                                    
+                                    # Configure Git to use SSH with the key
+                                    export GIT_SSH_COMMAND="ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no"
                                     
                                     cd external-k8s-manifests
                                     sed -i "s/newTag: .*/newTag: ${BUILD_NUMBER}/" overlays/dev/kustomization.yaml
@@ -719,7 +721,7 @@ pipeline {
                             }
                         }
                     }
-                }
+            }
 
                 stage('Wait for ArgoCD Sync') {
                     steps {
@@ -756,6 +758,8 @@ pipeline {
                         }
                     }
                 }
+           
+           
             }
         }
 
