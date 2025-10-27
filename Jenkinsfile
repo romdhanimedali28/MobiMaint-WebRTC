@@ -490,7 +490,7 @@ pipeline {
                    
                     // Build the Docker image
                     sh """
-                        docker build -t ${DOCKERHUB_REPO}:${BUILD_NUMBER} .
+                        docker build --network host -t ${DOCKERHUB_REPO}:${BUILD_NUMBER} .
                     """
                    
                     // Tag with additional tags
