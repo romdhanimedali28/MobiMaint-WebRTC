@@ -708,7 +708,9 @@ pipeline {
                                     export GIT_SSH_COMMAND="ssh -i \${SSH_KEY} -o StrictHostKeyChecking=no"
                                     
                                     cd external-k8s-manifests
-                                     sed -i "s/newTag: .*/newTag: \\"${BUILD_NUMBER}\\"/" overlays/dev/kustomization.yaml                                    git config user.email "jenkins@localhost"
+                                     sed -i "s/newTag: .*/newTag: \\"${BUILD_NUMBER}\\"/" overlays/dev/kustomization.yaml
+                                    
+                                    git config user.email "jenkins@localhost"
                                     git config user.name "Jenkins CI"
                                     git add overlays/dev/kustomization.yaml
                                     git commit -m "CI: Update image to ${BUILD_NUMBER}"
