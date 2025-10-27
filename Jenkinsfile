@@ -700,14 +700,12 @@ pipeline {
                             
                             withCredentials([sshUserPrivateKey(credentialsId: 'github-ssh-key', keyFileVariable: 'SSH_KEY')]) {
                                 sh """
-                                    # Setup SSH
+                                                    # Add GitHub to known hosts
                                     mkdir -p ~/.ssh
-                                    cp \${SSH_KEY} ~/.ssh/id_rsa
-                                    chmod 600 ~/.ssh/id_rsa
-                                    ssh-keyscan github.com >> ~/.ssh/known_hosts
+                                    ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
                                     
-                                    # Configure Git to use SSH with the key
-                                    export GIT_SSH_COMMAND="ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no"
+                                    # Use the SSH_KEY directly (don't copy it)
+                                    export GIT_SSH_COMMAND="ssh -i \${SSH_KEY} -o StrictHostKeyChecking=no"
                                     
                                     cd external-k8s-manifests
                                     sed -i "s/newTag: .*/newTag: ${BUILD_NUMBER}/" overlays/dev/kustomization.yaml
