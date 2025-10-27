@@ -808,7 +808,7 @@ pipeline {
      }
 
 
-        stage('DAST Scan') {
+    stage('DAST Scan') {
     steps {
         script {
             echo "🎯 Running DAST on Local Kubernetes Deployment..."
@@ -819,47 +819,49 @@ pipeline {
 
             echo "DAST Target URL: ${BASE_URL}"
 
-            sh """
-                echo "Waiting for service to be ready..."
-                sleep 30
+            // Check service accessibility in Groovy
+            def serviceStatus = sh(
+                script: """
+                    curl -sf ${BASE_URL}/health >/dev/null && echo "Accessible" || echo "Not Accessible"
+                """,
+                returnStdout: true
+            ).trim()
 
-                echo "Testing service connectivity..."
-                if curl -f ${BASE_URL}/health; then
-                    echo "✅ Service accessible"
-                    SERVICE_STATUS="Accessible"
-                else
-                    echo "❌ Service not accessible"
-                    echo "Check if NodePort service is properly configured"
-                    SERVICE_STATUS="Not Accessible"
-                fi
+            // Get HTTP codes
+            def healthCode = sh(
+                script: "curl -s -o /dev/null -w \"%{http_code}\" ${BASE_URL}/health || echo 000",
+                returnStdout: true
+            ).trim()
+            def expertsCode = sh(
+                script: "curl -s -o /dev/null -w \"%{http_code}\" ${BASE_URL}/api/experts || echo 000",
+                returnStdout: true
+            ).trim()
+            def callsCode = sh(
+                script: "curl -s -o /dev/null -w \"%{http_code}\" ${BASE_URL}/api/calls || echo 000",
+                returnStdout: true
+            ).trim()
 
-                echo "Running basic security tests..."
-                HEALTH_CODE=\$(curl -s -o /dev/null -w "%{http_code}" ${BASE_URL}/health || echo "000")
-                EXPERTS_CODE=\$(curl -s -o /dev/null -w "%{http_code}" ${BASE_URL}/api/experts || echo "000")
-                CALLS_CODE=\$(curl -s -o /dev/null -w "%{http_code}" ${BASE_URL}/api/calls || echo "000")
-
-                # Create DAST report
-                cat > dast-local-report.txt <<EOF
+            // Create report
+            writeFile file: 'dast-local-report.txt', text: """
 ╔══════════════════════════════════════════════════╗
 ║           Local Cluster DAST Report              ║
 ║           Build: ${BUILD_NUMBER}                         ║
 ║           Target: ${BASE_URL}           ║
 ╚══════════════════════════════════════════════════╝
 
-Service Status: ${SERVICE_STATUS}
+Service Status: ${serviceStatus}
 
 Basic Connectivity Tests:
-- Health Endpoint: \$HEALTH_CODE
-- API Experts: \$EXPERTS_CODE
-- API Calls: \$CALLS_CODE
+- Health Endpoint: ${healthCode}
+- API Experts: ${expertsCode}
+- API Calls: ${callsCode}
 
 Notes:
 - Local cluster DAST scan completed
 - For comprehensive DAST, consider using external tools
-EOF
+"""
 
-                cat dast-local-report.txt
-            """
+            sh "cat dast-local-report.txt"
 
             archiveArtifacts artifacts: 'dast-local-report.txt', fingerprint: true
 
@@ -875,7 +877,7 @@ EOF
                         [title: 'Stage', value: 'DAST Scan', short: true],
                         [title: 'Target', value: BASE_URL, short: true],
                         [title: 'Environment', value: 'Local Kubernetes', short: true],
-                        [title: 'Status', value: SERVICE_STATUS, short: false],
+                        [title: 'Status', value: serviceStatus, short: false],
                         [title: 'Report', value: "[View Report](${env.BUILD_URL}artifact/dast-local-report.txt)", short: false]
                     ]
                 ]]
@@ -885,6 +887,7 @@ EOF
         }
     }
 }
+
 
     }
     
