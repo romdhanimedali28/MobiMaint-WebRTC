@@ -721,41 +721,31 @@ pipeline {
                     }
             }
 
-stage('Wait for ArgoCD Sync') {
+stage('Check ArgoCD App Status') {
     steps {
         script {
-            echo "⏳ Waiting for ArgoCD sync to complete..."
-            
-            // Copy kubeconfig to workspace (no sudo needed)
-            sh """
-                echo "Copying kubeconfig to workspace..."
-                cp ${env.KUBECONFIG_PATH} \${WORKSPACE}/kubeconfig || exit 1
-                chmod 644 \${WORKSPACE}/kubeconfig
-                ls -la \${WORKSPACE}/kubeconfig
-            """
-            
+            echo "⏳ Checking ArgoCD sync and health status..."
+
             timeout(time: 10, unit: 'MINUTES') {
                 waitUntil {
-                    withEnv(["KUBECONFIG=\${WORKSPACE}/kubeconfig"]) {
+                    withEnv(["KUBECONFIG=${env.WORKSPACE}/kubeconfig"]) {
                         def syncStatus = sh(
-                            script: """
-                                kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown"
-                            """,
+                            script: "kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.sync.status}' 2>/dev/null || echo 'Unknown'",
                             returnStdout: true
                         ).trim()
                         
                         def healthStatus = sh(
-                            script: """
-                                kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown"
-                            """,
+                            script: "kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.health.status}' 2>/dev/null || echo 'Unknown'",
                             returnStdout: true
                         ).trim()
                         
+                        echo "Current status: Sync=${syncStatus}, Health=${healthStatus}"
+                        
                         if (syncStatus == "Synced" && healthStatus == "Healthy") {
-                            echo "✅ ArgoCD sync completed successfully"
+                            echo "✅ ArgoCD app is synced and healthy!"
                             return true
                         } else {
-                            echo "⏳ Waiting for sync... (Current: Sync=${syncStatus}, Health=${healthStatus})"
+                            echo "⏳ Waiting for ArgoCD app to become healthy..."
                             sleep(30)
                             return false
                         }
@@ -765,6 +755,7 @@ stage('Wait for ArgoCD Sync') {
         }
     }
 }
+
            
            
             }
