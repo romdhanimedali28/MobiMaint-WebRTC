@@ -725,19 +725,29 @@ pipeline {
                     steps {
                         script {
                             echo "⏳ Waiting for ArgoCD sync to complete..."
-                            timeout(time: 10, unit: 'MINUTES') {
+                           timeout(time: 10, unit: 'MINUTES') {
                                 waitUntil {
                                     withEnv(["KUBECONFIG=${env.KUBECONFIG_PATH}"]) {
                                         def syncStatus = sh(
                                             script: """
-                                                kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown"
+                                                result=\$(kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.sync.status}' 2>/dev/null)
+                                                if [ -z "\$result" ]; then
+                                                    echo "Unknown"
+                                                else
+                                                    echo "\$result"
+                                                fi
                                             """,
                                             returnStdout: true
                                         ).trim()
                                         
                                         def healthStatus = sh(
                                             script: """
-                                                kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown"
+                                                result=\$(kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.health.status}' 2>/dev/null)
+                                                if [ -z "\$result" ]; then
+                                                    echo "Unknown"
+                                                else
+                                                    echo "\$result"
+                                                fi
                                             """,
                                             returnStdout: true
                                         ).trim()
