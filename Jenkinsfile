@@ -721,51 +721,68 @@ pipeline {
                     }
             }
 
-                stage('Wait for ArgoCD Sync') {
-                    steps {
-                        script {
-                            echo "⏳ Waiting for ArgoCD sync to complete..."
-                           timeout(time: 10, unit: 'MINUTES') {
-                                waitUntil {
-                                    withEnv(["KUBECONFIG=${env.KUBECONFIG_PATH}"]) {
-                                        def syncStatus = sh(
-                                            script: """
-                                                result=\$(kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.sync.status}' 2>/dev/null)
-                                                if [ -z "\$result" ]; then
-                                                    echo "Unknown"
-                                                else
-                                                    echo "\$result"
-                                                fi
-                                            """,
-                                            returnStdout: true
-                                        ).trim()
-                                        
-                                        def healthStatus = sh(
-                                            script: """
-                                                result=\$(kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.health.status}' 2>/dev/null)
-                                                if [ -z "\$result" ]; then
-                                                    echo "Unknown"
-                                                else
-                                                    echo "\$result"
-                                                fi
-                                            """,
-                                            returnStdout: true
-                                        ).trim()
-                                        
-                                        if (syncStatus == "Synced" && healthStatus == "Healthy") {
-                                            echo "✅ ArgoCD sync completed successfully"
-                                            return true
-                                        } else {
-                                            echo "⏳ Waiting for sync... (Current: Sync=${syncStatus}, Health=${healthStatus})"
-                                            sleep(30)
-                                            return false
-                                        }
-                                    }
-                                }
-                            }
+               stage('Wait for ArgoCD Sync') {
+    steps {
+        script {
+            echo "⏳ Waiting for ArgoCD sync to complete..."
+            timeout(time: 10, unit: 'MINUTES') {
+                waitUntil {
+                    withEnv(["KUBECONFIG=${env.KUBECONFIG_PATH}"]) {
+                        // First, debug the kubectl command
+                        def debugCmd = sh(
+                            script: """
+                                echo "DEBUG: Checking if application exists..."
+                                kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} --v=6 2>&1 || echo "KUBECTL_FAILED"
+                                echo "DEBUG: Exit code: \$?"
+                            """,
+                            returnStdout: true
+                        ).trim()
+                        echo "DEBUG Output: ${debugCmd}"
+                        
+                        def syncStatus = sh(
+                            script: """
+                                # Remove 2>/dev/null to see the actual error
+                                result=\$(kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.sync.status}')
+                                exit_code=\$?
+                                echo "Command exit code: \$exit_code" >&2
+                                if [ \$exit_code -ne 0 ] || [ -z "\$result" ]; then
+                                    echo "Unknown"
+                                else
+                                    echo "\$result"
+                                fi
+                            """,
+                            returnStdout: true
+                        ).trim()
+                        
+                        def healthStatus = sh(
+                            script: """
+                                result=\$(kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.health.status}')
+                                exit_code=\$?
+                                if [ \$exit_code -ne 0 ] || [ -z "\$result" ]; then
+                                    echo "Unknown"
+                                else
+                                    echo "\$result"
+                                fi
+                            """,
+                            returnStdout: true
+                        ).trim()
+                        
+                        echo "DEBUG: syncStatus='${syncStatus}', healthStatus='${healthStatus}'"
+                        
+                        if (syncStatus == "Synced" && healthStatus == "Healthy") {
+                            echo "✅ ArgoCD sync completed successfully"
+                            return true
+                        } else {
+                            echo "⏳ Waiting for sync... (Current: Sync=${syncStatus}, Health=${healthStatus})"
+                            sleep(30)
+                            return false
                         }
                     }
                 }
+            }
+        }
+    }
+}
            
            
             }
