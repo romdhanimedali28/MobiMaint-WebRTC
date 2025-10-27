@@ -721,21 +721,22 @@ pipeline {
                     }
             }
 
-               stage('Wait for ArgoCD Sync') {
+stage('Wait for ArgoCD Sync') {
     steps {
         script {
             echo "⏳ Waiting for ArgoCD sync to complete..."
             
-            // Fix kubeconfig permissions first
+            // Copy kubeconfig to workspace (no sudo needed)
             sh """
-                echo "Fixing kubeconfig permissions..."
-                sudo chmod 644 ${env.KUBECONFIG_PATH} || echo "Could not change permissions, continuing..."
-                ls -la ${env.KUBECONFIG_PATH}
+                echo "Copying kubeconfig to workspace..."
+                cp ${env.KUBECONFIG_PATH} \${WORKSPACE}/kubeconfig || exit 1
+                chmod 644 \${WORKSPACE}/kubeconfig
+                ls -la \${WORKSPACE}/kubeconfig
             """
             
             timeout(time: 10, unit: 'MINUTES') {
                 waitUntil {
-                    withEnv(["KUBECONFIG=${env.KUBECONFIG_PATH}"]) {
+                    withEnv(["KUBECONFIG=\${WORKSPACE}/kubeconfig"]) {
                         def syncStatus = sh(
                             script: """
                                 kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown"
