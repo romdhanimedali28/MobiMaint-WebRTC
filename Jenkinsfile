@@ -693,11 +693,15 @@ pipeline {
           
         stage('Parallel GitOps Deployment') {
             parallel(failFast: true) {
-                stage('Update GitOps Manifests') {
+               stage('Update GitOps Manifests') {
                     steps {
                         script {
                             echo "🔄 Updating GitOps manifests with new image tag..."
                             sh """
+                                # Install yq (for Linux, adjust for your OS)
+                                wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+                                chmod +x /usr/local/bin/yq
+
                                 cd external-k8s-manifests
                                 yq eval ".images[0].newTag = \\"${BUILD_NUMBER}\\"" -i overlays/dev/kustomization.yaml
                                 git config user.email "jenkins@localhost"
@@ -708,7 +712,7 @@ pipeline {
                             """
                         }
                     }
-                }
+            }
 
                 stage('Wait for ArgoCD Sync') {
                     steps {
