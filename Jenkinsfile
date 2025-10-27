@@ -728,7 +728,7 @@ stage('Check ArgoCD App Status') {
 
             timeout(time: 10, unit: 'MINUTES') {
                 waitUntil {
-                    withEnv(["KUBECONFIG=${env.WORKSPACE}/kubeconfig"]) {
+                  withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG')]) {
                         def syncStatus = sh(
                             script: "kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o jsonpath='{.status.sync.status}' 2>/dev/null || echo 'Unknown'",
                             returnStdout: true
