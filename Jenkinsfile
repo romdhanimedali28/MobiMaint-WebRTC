@@ -761,135 +761,131 @@ pipeline {
             }
         }
 
-      stage('Verify Deployment') {
+         stage('Verify Deployment') {
+                steps {
+                    script {
+                        echo "🔍 Verifying deployment status..."
+
+                        withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG')]) {
+                            // Main kubectl checks
+                            sh """
+                                echo "=== Application Details ==="
+                                kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o yaml | grep -A 10 -B 5 'status:'
+
+                                echo "=== Deployment Status ==="
+                                kubectl get deployment -l app=webrtc-signaling-server -o wide
+
+                                echo "=== Pod Status ==="
+                                kubectl get pods -l app=webrtc-signaling-server -o wide
+
+                                echo "=== Service Status ==="
+                                kubectl get svc -l app=webrtc-signaling-server -o wide
+
+                                echo "=== Checking Rollout Status ==="
+                                kubectl rollout status deployment/webrtc-signaling-server --timeout=300s
+
+                                echo "=== Current Image Version ==="
+                                kubectl get deployment webrtc-signaling-server -o jsonpath='{.spec.template.spec.containers[0].image}'
+                                echo ""
+                            """
+
+                            // Verify the correct image is running
+                            def currentImage = sh(
+                                script: "kubectl get deployment webrtc-signaling-server -o jsonpath='{.spec.template.spec.containers[0].image}'",
+                                returnStdout: true
+                            ).trim()
+
+                            def expectedImage = "${DOCKERHUB_REPO}:${BUILD_NUMBER}"
+
+                            if (currentImage == expectedImage) {
+                                echo "✅ Verified: Correct image deployed - ${currentImage}"
+                            } else {
+                                echo "⚠️ Warning: Image mismatch. Expected: ${expectedImage}, Got: ${currentImage}"
+                            }
+                        }
+                    }
+                }
+     }
+
+
+        stage('DAST Scan') {
     steps {
         script {
-            echo "🔍 Verifying deployment status..."
+            echo "🎯 Running DAST on Local Kubernetes Deployment..."
 
-            withCredentials([file(credentialsId: 'k8s_config', variable: 'KUBECONFIG')]) {
-                // Main kubectl checks
-                sh """
-                    echo "=== Application Details ==="
-                    kubectl get application ${ARGOCD_APP_NAME} -n ${ARGOCD_NAMESPACE} -o yaml | grep -A 10 -B 5 'status:'
+            def NODE_PORT = "30001"  // NodePort of your service
+            def NODE_IP = env.MASTER_NODE_IP  // Master node IP
+            def BASE_URL = "http://${NODE_IP}:${NODE_PORT}"
 
-                    echo "=== Deployment Status ==="
-                    kubectl get deployment -l app=webrtc-signaling-server -o wide
+            echo "DAST Target URL: ${BASE_URL}"
 
-                    echo "=== Pod Status ==="
-                    kubectl get pods -l app=webrtc-signaling-server -o wide
+            sh """
+                echo "Waiting for service to be ready..."
+                sleep 30
 
-                    echo "=== Service Status ==="
-                    kubectl get svc -l app=webrtc-signaling-server -o wide
+                echo "Testing service connectivity..."
+                if curl -f ${BASE_URL}/health; then
+                    echo "✅ Service accessible"
+                    SERVICE_STATUS="Accessible"
+                else
+                    echo "❌ Service not accessible"
+                    echo "Check if NodePort service is properly configured"
+                    SERVICE_STATUS="Not Accessible"
+                fi
 
-                    echo "=== Checking Rollout Status ==="
-                    kubectl rollout status deployment/webrtc-signaling-server --timeout=300s
+                echo "Running basic security tests..."
+                HEALTH_CODE=\$(curl -s -o /dev/null -w "%{http_code}" ${BASE_URL}/health || echo "000")
+                EXPERTS_CODE=\$(curl -s -o /dev/null -w "%{http_code}" ${BASE_URL}/api/experts || echo "000")
+                CALLS_CODE=\$(curl -s -o /dev/null -w "%{http_code}" ${BASE_URL}/api/calls || echo "000")
 
-                    echo "=== Current Image Version ==="
-                    kubectl get deployment webrtc-signaling-server -o jsonpath='{.spec.template.spec.containers[0].image}'
-                    echo ""
-                """
+                # Create DAST report
+                cat > dast-local-report.txt <<EOF
+╔══════════════════════════════════════════════════╗
+║           Local Cluster DAST Report              ║
+║           Build: ${BUILD_NUMBER}                         ║
+║           Target: ${BASE_URL}           ║
+╚══════════════════════════════════════════════════╝
 
-                // Verify the correct image is running
-                def currentImage = sh(
-                    script: "kubectl get deployment webrtc-signaling-server -o jsonpath='{.spec.template.spec.containers[0].image}'",
-                    returnStdout: true
-                ).trim()
+Service Status: ${SERVICE_STATUS}
 
-                def expectedImage = "${DOCKERHUB_REPO}:${BUILD_NUMBER}"
+Basic Connectivity Tests:
+- Health Endpoint: \$HEALTH_CODE
+- API Experts: \$EXPERTS_CODE
+- API Calls: \$CALLS_CODE
 
-                if (currentImage == expectedImage) {
-                    echo "✅ Verified: Correct image deployed - ${currentImage}"
-                } else {
-                    echo "⚠️ Warning: Image mismatch. Expected: ${expectedImage}, Got: ${currentImage}"
-                }
-            }
+Notes:
+- Local cluster DAST scan completed
+- For comprehensive DAST, consider using external tools
+EOF
+
+                cat dast-local-report.txt
+            """
+
+            archiveArtifacts artifacts: 'dast-local-report.txt', fingerprint: true
+
+            slackSend(
+                botUser: true,
+                tokenCredentialId: 'slack-bot-token',
+                channel: '#jenkins-alerts',
+                message: "🔍 *Local DAST Scan Completed*",
+                attachments: [[
+                    color: 'good',
+                    title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                    fields: [
+                        [title: 'Stage', value: 'DAST Scan', short: true],
+                        [title: 'Target', value: BASE_URL, short: true],
+                        [title: 'Environment', value: 'Local Kubernetes', short: true],
+                        [title: 'Status', value: SERVICE_STATUS, short: false],
+                        [title: 'Report', value: "[View Report](${env.BUILD_URL}artifact/dast-local-report.txt)", short: false]
+                    ]
+                ]]
+            )
+
+            echo "✅ DAST scan completed for local cluster deployment"
         }
     }
 }
 
-
-        stage('DAST Scan') {
-            steps {
-                script {
-                    echo "🎯 Running DAST on Local Kubernetes Deployment..."
-                    
-                    // Use NodePort service for local cluster
-                    def NODE_PORT = "30001"  // Adjust based on your service configuration
-                    def NODE_IP = env.MASTER_NODE_IP  // Use master node IP
-                    def BASE_URL = "http://${NODE_IP}:${NODE_PORT}"
-                    
-                    echo "DAST Target URL: ${BASE_URL}"
-                    
-                    sh """
-                        # Wait for service to be ready
-                        echo "Waiting for service to be ready..."
-                        sleep 30
-                        
-                        # Test basic connectivity
-                        echo "Testing service connectivity..."
-                        curl -f ${BASE_URL}/health || {
-                            echo "❌ Service not accessible"
-                            echo "Check if NodePort service is properly configured"
-                            exit 0  # Don't fail build, just skip DAST
-                        }
-                        
-                        # Run basic security tests
-                        echo "Running basic security tests..."
-                        
-                        # Test various endpoints
-                        curl -s -o /dev/null -w "Health endpoint: %{http_code}\n" ${BASE_URL}/health
-                        curl -s -o /dev/null -w "API experts: %{http_code}\n" ${BASE_URL}/api/experts
-                        curl -s -o /dev/null -w "API calls: %{http_code}\n" ${BASE_URL}/api/calls
-                        
-                        # Create simple security report
-                        cat > dast-local-report.txt <<EOF
-                        ╔══════════════════════════════════════════════════╗
-                        ║           Local Cluster DAST Report              ║
-                        ║           Build: ${BUILD_NUMBER}                         ║
-                        ║           Target: ${BASE_URL}           ║
-                        ╚══════════════════════════════════════════════════╝
-                        
-                        Basic Connectivity Tests:
-                        - Health Endpoint: \$(curl -s -o /dev/null -w "%{http_code}" ${BASE_URL}/health)
-                        - API Experts: \$(curl -s -o /dev/null -w "%{http_code}" ${BASE_URL}/api/experts)
-                        - API Calls: \$(curl -s -o /dev/null -w "%{http_code}" ${BASE_URL}/api/calls)
-                        
-                        Notes:
-                        - Local cluster DAST scan completed
-                        - For comprehensive DAST, consider using external tools
-                        - Service accessible at: ${BASE_URL}
-                        
-                        EOF
-                        
-                        cat dast-local-report.txt
-                    """
-                    
-                    // Archive report
-                    archiveArtifacts artifacts: 'dast-local-report.txt', fingerprint: true
-                    
-                    // Send Slack notification
-                    slackSend(
-                        botUser: true,
-                        tokenCredentialId: 'slack-bot-token',
-                        channel: '#jenkins-alerts',
-                        message: "🔍 *Local DAST Scan Completed*",
-                        attachments: [[
-                            color: 'good',
-                            title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
-                            fields: [
-                                [title: 'Stage', value: 'DAST Scan', short: true],
-                                [title: 'Target', value: BASE_URL, short: true],
-                                [title: 'Environment', value: 'Local Kubernetes', short: true],
-                                [title: 'Status', value: '✅ Basic tests completed', short: false],
-                                [title: 'Report', value: "[View Report](${env.BUILD_URL}artifact/dast-local-report.txt)", short: false]
-                            ]
-                        ]]
-                    )
-                    
-                    echo "✅ DAST scan completed for local cluster deployment"
-                }
-            }
-        }
     }
     
     post {
