@@ -697,19 +697,16 @@ pipeline {
                     steps {
                         script {
                             echo "🔄 Updating GitOps manifests with new image tag..."
-                            sh """
-                                # Install yq (for Linux, adjust for your OS)
-                                wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-                                chmod +x /usr/local/bin/yq
-
-                                cd external-k8s-manifests
-                                yq eval ".images[0].newTag = \\"${BUILD_NUMBER}\\"" -i overlays/dev/kustomization.yaml
-                                git config user.email "jenkins@localhost"
-                                git config user.name "Jenkins CI"
-                                git add overlays/dev/kustomization.yaml
-                                git commit -m "CI: Update image to ${BUILD_NUMBER}"
-                                git push origin main
-                            """
+                               sh """
+                                    cd external-k8s-manifests
+                                    sed -i "s/newTag: .*/newTag: ${BUILD_NUMBER}/" overlays/dev/kustomization.yaml
+                                    
+                                    git config user.email "jenkins@localhost"
+                                    git config user.name "Jenkins CI"
+                                    git add overlays/dev/kustomization.yaml
+                                    git commit -m "CI: Update image to ${BUILD_NUMBER}"
+                                    git push origin main
+                                """
                         }
                     }
             }
