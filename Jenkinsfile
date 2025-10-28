@@ -48,37 +48,144 @@ pipeline {
         
         
 
-        stage('SonarQube Analysis') {
-            steps {
-                script {
-                    echo "Running SonarQube analysis..."
-                    withSonarQubeEnv('SonarQube') {
-                        sh """
-                            npm install
-                            npm run test:coverage || true
-                            # Run SonarScanner with project-specific parameters
-                            ${scannerHome}/bin/sonar-scanner \
-                                -Dsonar.projectKey=webrtc-pipeline \
-                                -Dsonar.projectName=webrtc-pipeline \
-                                -Dsonar.projectVersion=${BUILD_NUMBER} \
-                                -Dsonar.sources=. \
-                                -Dsonar.tests=. \
-                                -Dsonar.language=js \
-                                -Dsonar.sourceEncoding=UTF-8 \
-                                -Dsonar.exclusions=node_modules/**,coverage/** \
-                                -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
-                                -Dsonar.gitlab.commit_sha=${GIT_COMMIT_SHORT}
-                        """
+     stage('SonarQube Analysis') {
+    steps {
+        script {
+            echo "Running SonarQube analysis..."
+            
+            def analysisStatus = 'Unknown'
+            def qualityGateStatus = 'Unknown'
+            def bugs = '0'
+            def vulnerabilities = '0'
+            def codeSmells = '0'
+            def coverage = '0%'
+            def duplications = '0%'
+            
+            try {
+                withSonarQubeEnv('SonarQube') {
+                    sh """
+                        npm install
+                        npm run test:coverage || true
+                        # Run SonarScanner with project-specific parameters
+                        ${scannerHome}/bin/sonar-scanner \
+                            -Dsonar.projectKey=webrtc-pipeline \
+                            -Dsonar.projectName=webrtc-pipeline \
+                            -Dsonar.projectVersion=${BUILD_NUMBER} \
+                            -Dsonar.sources=. \
+                            -Dsonar.tests=. \
+                            -Dsonar.language=js \
+                            -Dsonar.sourceEncoding=UTF-8 \
+                            -Dsonar.exclusions=node_modules/**,coverage/** \
+                            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
+                            -Dsonar.gitlab.commit_sha=${GIT_COMMIT_SHORT}
+                    """
+                }
+                
+                analysisStatus = 'Completed'
+                
+                timeout(time: 2, unit: 'MINUTES') {
+                    def qg = waitForQualityGate()
+                    qualityGateStatus = qg.status
+                    
+                    // Try to extract metrics from quality gate result
+                    try {
+                        bugs = sh(
+                            script: "curl -s -u ${SONAR_TOKEN}: '${SONAR_HOST_URL}/api/measures/component?component=webrtc-pipeline&metricKeys=bugs' | grep -o '\"value\":\"[0-9]*\"' | head -1 | grep -o '[0-9]*' || echo '0'",
+                            returnStdout: true
+                        ).trim()
+                        
+                        vulnerabilities = sh(
+                            script: "curl -s -u ${SONAR_TOKEN}: '${SONAR_HOST_URL}/api/measures/component?component=webrtc-pipeline&metricKeys=vulnerabilities' | grep -o '\"value\":\"[0-9]*\"' | head -1 | grep -o '[0-9]*' || echo '0'",
+                            returnStdout: true
+                        ).trim()
+                        
+                        codeSmells = sh(
+                            script: "curl -s -u ${SONAR_TOKEN}: '${SONAR_HOST_URL}/api/measures/component?component=webrtc-pipeline&metricKeys=code_smells' | grep -o '\"value\":\"[0-9]*\"' | head -1 | grep -o '[0-9]*' || echo '0'",
+                            returnStdout: true
+                        ).trim()
+                        
+                        coverage = sh(
+                            script: "curl -s -u ${SONAR_TOKEN}: '${SONAR_HOST_URL}/api/measures/component?component=webrtc-pipeline&metricKeys=coverage' | grep -o '\"value\":\"[0-9.]*\"' | head -1 | grep -o '[0-9.]*' || echo '0'",
+                            returnStdout: true
+                        ).trim() + '%'
+                        
+                        duplications = sh(
+                            script: "curl -s -u ${SONAR_TOKEN}: '${SONAR_HOST_URL}/api/measures/component?component=webrtc-pipeline&metricKeys=duplicated_lines_density' | grep -o '\"value\":\"[0-9.]*\"' | head -1 | grep -o '[0-9.]*' || echo '0'",
+                            returnStdout: true
+                        ).trim() + '%'
+                    } catch (Exception e) {
+                        echo "Warning: Could not fetch detailed metrics: ${e.message}"
                     }
-                    timeout(time: 2, unit: 'MINUTES') {
-                        def qg = waitForQualityGate()
-                        if (qg.status != 'OK') {
-                            error "Pipeline aborted due to SonarQube quality gate failure: ${qg.status}"
-                        }
+                    
+                    // Send Slack notification
+                    slackSend(
+                        botUser: true,
+                        tokenCredentialId: 'slack-bot-token',
+                        channel: '#jenkins-alerts',
+                        message: "📊 *SonarQube Analysis Completed*",
+                        attachments: [
+                            [
+                                color: (qualityGateStatus == 'OK') ? 'good' : 'danger',
+                                title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - Code Quality Analysis",
+                                title_link: "${env.BUILD_URL}",
+                                fields: [
+                                    [title: 'Stage', value: 'SonarQube Analysis', short: true],
+                                    [title: 'Quality Gate', value: qualityGateStatus == 'OK' ? '✅ PASSED' : '❌ FAILED', short: true],
+                                    [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
+                                    [title: 'Build Version', value: "${BUILD_NUMBER}", short: true],
+                                    [title: 'Bugs', value: bugs, short: true],
+                                    [title: 'Vulnerabilities', value: vulnerabilities, short: true],
+                                    [title: 'Code Smells', value: codeSmells, short: true],
+                                    [title: 'Coverage', value: coverage, short: true],
+                                    [title: 'Duplications', value: duplications, short: true],
+                                    [title: 'SonarQube Dashboard', value: "[View Details](${SONAR_HOST_URL}/dashboard?id=webrtc-pipeline)", short: false]
+                                ],
+                                footer: 'Jenkins CI/CD Pipeline with DevSecOps',
+                                ts: sh(script: 'date +%s', returnStdout: true).trim()
+                            ]
+                        ]
+                    )
+                    
+                    if (qg.status != 'OK') {
+                        error "Pipeline aborted due to SonarQube quality gate failure: ${qg.status}"
                     }
                 }
+                
+                echo "✅ SonarQube analysis completed successfully"
+                
+            } catch (Exception e) {
+                analysisStatus = 'Failed'
+                qualityGateStatus = 'ERROR'
+                
+                // Send failure notification
+                slackSend(
+                    botUser: true,
+                    tokenCredentialId: 'slack-bot-token',
+                    channel: '#jenkins-alerts',
+                    message: "❌ *SonarQube Analysis Failed*",
+                    attachments: [
+                        [
+                            color: 'danger',
+                            title: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - Code Quality Analysis",
+                            title_link: "${env.BUILD_URL}",
+                            fields: [
+                                [title: 'Stage', value: 'SonarQube Analysis', short: true],
+                                [title: 'Status', value: '❌ FAILED', short: true],
+                                [title: 'Git Commit', value: "${env.GIT_COMMIT_SHORT}", short: true],
+                                [title: 'Error', value: e.message, short: false],
+                                [title: 'Action Required', value: '• Check SonarQube server status\n• Review code quality issues\n• Check build logs for details', short: false]
+                            ],
+                            footer: 'Jenkins CI/CD Pipeline with DevSecOps',
+                            ts: sh(script: 'date +%s', returnStdout: true).trim()
+                        ]
+                    ]
+                )
+                
+                throw e
             }
         }
+    }
+}
 
         stage('Fetch K8s Manifests') {
                     steps {
